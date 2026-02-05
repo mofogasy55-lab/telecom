@@ -1,0 +1,14 @@
+.env
+**/.env
+
+# Backend
+siig-backend/storage/app.db
+
+# Frontend
+siig-frontend/node_modules/
+siig-frontend/dist/
+
+# OS/IDE
+.DS_Store
+.vscode/
+.idea/
