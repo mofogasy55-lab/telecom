@@ -63,6 +63,7 @@ export default function DataTable({
   defaultQuickFilterKey = 'all',
   getRowSearchText,
   actions,
+  toolbarContent,
   exportFileName = 'export.csv'
 }) {
   const Btn = Button || ((props) => <button {...props} />)
@@ -214,6 +215,8 @@ export default function DataTable({
               ))}
             </div>
           ) : null}
+
+          {toolbarContent ? <div className="row" style={{ gap: 8 }}>{toolbarContent}</div> : null}
 
           <div style={{ minWidth: 260, flex: '0 0 auto' }}>
             <Inp value={query} onChange={(e) => setQuery(e.target.value)} placeholder={searchPlaceholder} />

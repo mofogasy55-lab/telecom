@@ -103,7 +103,9 @@ export default function TimetableView({ role, Button, Input, Select, onError }) 
       const semesterLabel = sem ? `${sem.code} — ${sem.title}` : `#${e.semester_id}`
       const classLabel = cls ? `${cls.code} — ${cls.title}` : `#${e.class_id}`
       const subjectLabel = subj ? `${subj.code} — ${subj.title}` : `#${e.subject_id}`
-      const teacherLabel = t ? `${t.matricule} — ${t.first_name} ${t.last_name}` : `#${e.teacher_id}`
+      const teacherLabel = t
+        ? `${t.first_name} ${t.last_name}${t.specialite ? ` — ${t.specialite}` : ''}`
+        : `#${e.teacher_id}`
 
       const whenLabel = `${dayLabel(e.day_of_week)} ${e.start_time} - ${e.end_time}`
       const categoryKey = classToCategoryKey(cls)
@@ -367,7 +369,8 @@ export default function TimetableView({ role, Button, Input, Select, onError }) 
                 <option value="">-- choisir --</option>
                 {teachers.map((t) => (
                   <option key={t.id} value={String(t.id)}>
-                    {t.matricule} — {t.first_name} {t.last_name}
+                    {t.first_name} {t.last_name}
+                    {t.specialite ? ` — ${t.specialite}` : ''}
                   </option>
                 ))}
               </Select>
@@ -442,218 +445,233 @@ export default function TimetableView({ role, Button, Input, Select, onError }) 
               </tr>
             </thead>
             <tbody>
-              {days.map((d) => {
-                const list = filteredByDay.get(d) || []
-                return (
-                  <React.Fragment key={`day-${d}`}>
-                    <tr>
-                      <td
-                        colSpan={10}
-                        style={{ fontWeight: 900, background: 'rgba(96, 165, 250, 0.12)', color: 'var(--brand)' }}
+              {canWrite
+                ? filtered.map((e) => {
+                    const isEditing = canWrite && editingId === e.id
+                    return (
+                      <tr
+                        key={e.id}
+                        onClick={
+                          canWrite && !isEditing
+                            ? () => {
+                                startEdit(e)
+                              }
+                            : undefined
+                        }
+                        style={{ cursor: canWrite && !isEditing ? 'pointer' : undefined }}
                       >
-                        {dayLabel(d)}
-                      </td>
-                    </tr>
-
-                    {list.length === 0 ? (
-                      <tr>
-                        <td className="label">-</td>
-                        <td className="label">-</td>
-                        <td className="label">-</td>
-                        <td className="label">-</td>
-                        <td className="label">-</td>
-                        <td className="label">-</td>
-                        <td className="label">-</td>
-                        <td className="label">-</td>
-                        <td className="label">-</td>
-                        <td className="label">-</td>
-                      </tr>
-                    ) : null}
-
-                    {list.map((e) => {
-                      const isEditing = canWrite && editingId === e.id
-                      return (
-                        <tr
-                          key={e.id}
-                          onClick={
-                            canWrite && !isEditing
-                              ? () => {
-                                  startEdit(e)
-                                }
-                              : undefined
-                          }
-                          style={{ cursor: canWrite && !isEditing ? 'pointer' : undefined }}
-                        >
-                          <td>
-                            {isEditing ? (
-                              <Select value={editDayOfWeek} onChange={(ev) => setEditDayOfWeek(ev.target.value)}>
-                                <option value="">--</option>
-                                <option value="1">Lundi</option>
-                                <option value="2">Mardi</option>
-                                <option value="3">Mercredi</option>
-                                <option value="4">Jeudi</option>
-                                <option value="5">Vendredi</option>
-                                <option value="6">Samedi</option>
-                              </Select>
-                            ) : (
-                              dayLabel(e.day_of_week)
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <Select value={editSemesterId} onChange={(ev) => setEditSemesterId(ev.target.value)}>
-                                <option value="">-- choisir --</option>
-                                {semesters.map((s) => (
-                                  <option key={s.id} value={String(s.id)}>
-                                    {s.code} — {s.title}
-                                  </option>
-                                ))}
-                              </Select>
-                            ) : (
-                              e._semesterLabel
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <Select value={editClassId} onChange={(ev) => setEditClassId(ev.target.value)}>
-                                <option value="">-- choisir --</option>
-                                {classes.map((c) => (
-                                  <option key={c.id} value={String(c.id)}>
-                                    {c.code} — {c.title}
-                                  </option>
-                                ))}
-                              </Select>
-                            ) : (
-                              e._classLabel
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <Select value={editSubjectId} onChange={(ev) => setEditSubjectId(ev.target.value)}>
-                                <option value="">-- choisir --</option>
-                                {subjects.map((s) => (
-                                  <option key={s.id} value={String(s.id)}>
-                                    {s.code} — {s.title}
-                                  </option>
-                                ))}
-                              </Select>
-                            ) : (
-                              e._subjectLabel
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <Select value={editTeacherId} onChange={(ev) => setEditTeacherId(ev.target.value)}>
-                                <option value="">-- choisir --</option>
-                                {teachers.map((t) => (
-                                  <option key={t.id} value={String(t.id)}>
-                                    {t.matricule} — {t.first_name} {t.last_name}
-                                  </option>
-                                ))}
-                              </Select>
-                            ) : (
-                              e._teacherLabel
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <div className="row">
-                                <Input type="time" value={editStartTime} onChange={(ev) => setEditStartTime(ev.target.value)} />
-                                <Input type="time" value={editEndTime} onChange={(ev) => setEditEndTime(ev.target.value)} />
+                        <td>
+                          {isEditing ? (
+                            <Select value={editDayOfWeek} onChange={(ev) => setEditDayOfWeek(ev.target.value)}>
+                              <option value="">--</option>
+                              <option value="1">Lundi</option>
+                              <option value="2">Mardi</option>
+                              <option value="3">Mercredi</option>
+                              <option value="4">Jeudi</option>
+                              <option value="5">Vendredi</option>
+                              <option value="6">Samedi</option>
+                            </Select>
+                          ) : (
+                            dayLabel(e.day_of_week)
+                          )}
+                        </td>
+                        <td>
+                          {isEditing ? (
+                            <Select value={editSemesterId} onChange={(ev) => setEditSemesterId(ev.target.value)}>
+                              <option value="">-- choisir --</option>
+                              {semesters.map((s) => (
+                                <option key={s.id} value={String(s.id)}>
+                                  {s.code} — {s.title}
+                                </option>
+                              ))}
+                            </Select>
+                          ) : (
+                            e._semesterLabel
+                          )}
+                        </td>
+                        <td>
+                          {isEditing ? (
+                            <Select value={editClassId} onChange={(ev) => setEditClassId(ev.target.value)}>
+                              <option value="">-- choisir --</option>
+                              {classes.map((c) => (
+                                <option key={c.id} value={String(c.id)}>
+                                  {c.code} — {c.title}
+                                </option>
+                              ))}
+                            </Select>
+                          ) : (
+                            e._classLabel
+                          )}
+                        </td>
+                        <td>
+                          {isEditing ? (
+                            <Select value={editSubjectId} onChange={(ev) => setEditSubjectId(ev.target.value)}>
+                              <option value="">-- choisir --</option>
+                              {subjects.map((s) => (
+                                <option key={s.id} value={String(s.id)}>
+                                  {s.code} — {s.title}
+                                </option>
+                              ))}
+                            </Select>
+                          ) : (
+                            e._subjectLabel
+                          )}
+                        </td>
+                        <td>
+                          {isEditing ? (
+                            <Select value={editTeacherId} onChange={(ev) => setEditTeacherId(ev.target.value)}>
+                              <option value="">-- choisir --</option>
+                              {teachers.map((t) => (
+                                <option key={t.id} value={String(t.id)}>
+                                  {t.first_name} {t.last_name}
+                                  {t.specialite ? ` — ${t.specialite}` : ''}
+                                </option>
+                              ))}
+                            </Select>
+                          ) : (
+                            e._teacherLabel
+                          )}
+                        </td>
+                        <td>
+                          {isEditing ? (
+                            <div className="row">
+                              <Input type="time" value={editStartTime} onChange={(ev) => setEditStartTime(ev.target.value)} />
+                              <Input type="time" value={editEndTime} onChange={(ev) => setEditEndTime(ev.target.value)} />
+                            </div>
+                          ) : (
+                            `${e.start_time} - ${e.end_time}`
+                          )}
+                        </td>
+                        <td>
+                          {isEditing ? <Input value={editRoom} onChange={(ev) => setEditRoom(ev.target.value)} /> : e.room || '-'}
+                        </td>
+                        <td>
+                          {isEditing ? (
+                            <Select value={editMode} onChange={(ev) => setEditMode(ev.target.value)}>
+                              <option value="">--</option>
+                              <option value="presentiel">Présentiel</option>
+                              <option value="online">En ligne</option>
+                            </Select>
+                          ) : (
+                            e.mode || '-'
+                          )}
+                        </td>
+                        <td>
+                          {isEditing ? (
+                            <Input value={editOnlineUrl} onChange={(ev) => setEditOnlineUrl(ev.target.value)} placeholder="https://…" />
+                          ) : e.online_url ? (
+                            <a href={e.online_url} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()}>
+                              Ouvrir
+                            </a>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {canWrite ? (
+                            isEditing ? (
+                              <div className="row" style={{ justifyContent: 'flex-end' }}>
+                                <Button
+                                  variant="primary"
+                                  type="button"
+                                  onClick={(ev) => {
+                                    ev.stopPropagation()
+                                    saveEdit(e.id)
+                                  }}
+                                  disabled={
+                                    !editSemesterId ||
+                                    !editClassId ||
+                                    !editSubjectId ||
+                                    !editTeacherId ||
+                                    !editDayOfWeek ||
+                                    !editStartTime ||
+                                    !editEndTime
+                                  }
+                                >
+                                  Enregistrer
+                                </Button>
+                                <Button
+                                  type="button"
+                                  onClick={(ev) => {
+                                    ev.stopPropagation()
+                                    cancelEdit()
+                                  }}
+                                >
+                                  Annuler
+                                </Button>
                               </div>
                             ) : (
-                              `${e.start_time} - ${e.end_time}`
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? <Input value={editRoom} onChange={(ev) => setEditRoom(ev.target.value)} /> : e.room || '-'}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <Select value={editMode} onChange={(ev) => setEditMode(ev.target.value)}>
-                                <option value="">--</option>
-                                <option value="presentiel">Présentiel</option>
-                                <option value="online">En ligne</option>
-                              </Select>
-                            ) : (
-                              e.mode || '-'
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <Input value={editOnlineUrl} onChange={(ev) => setEditOnlineUrl(ev.target.value)} placeholder="https://…" />
-                            ) : e.online_url ? (
-                              <a href={e.online_url} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()}>
-                                Ouvrir
-                              </a>
-                            ) : (
-                              '-'
-                            )}
-                          </td>
-                          <td style={{ textAlign: 'right' }}>
-                            {canWrite ? (
-                              isEditing ? (
-                                <div className="row" style={{ justifyContent: 'flex-end' }}>
-                                  <Button
-                                    variant="primary"
-                                    type="button"
-                                    onClick={(ev) => {
-                                      ev.stopPropagation()
-                                      saveEdit(e.id)
-                                    }}
-                                    disabled={
-                                      !editSemesterId ||
-                                      !editClassId ||
-                                      !editSubjectId ||
-                                      !editTeacherId ||
-                                      !editDayOfWeek ||
-                                      !editStartTime ||
-                                      !editEndTime
-                                    }
-                                  >
-                                    Enregistrer
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    onClick={(ev) => {
-                                      ev.stopPropagation()
-                                      cancelEdit()
-                                    }}
-                                  >
-                                    Annuler
-                                  </Button>
+                              <div className="row" style={{ justifyContent: 'flex-end' }}>
+                                <Button
+                                  type="button"
+                                  onClick={(ev) => {
+                                    ev.stopPropagation()
+                                    startEdit(e)
+                                  }}
+                                >
+                                  Modifier
+                                </Button>
+                                <Button
+                                  variant="danger"
+                                  type="button"
+                                  onClick={(ev) => {
+                                    ev.stopPropagation()
+                                    onDelete(e.id)
+                                  }}
+                                >
+                                  Supprimer
+                                </Button>
+                              </div>
+                            )
+                          ) : null}
+                        </td>
+                      </tr>
+                    )
+                  })
+                : days.map((d) => {
+                    const list = (filteredByDay.get(d) || []).slice().sort((a, b) => String(a.start_time || '').localeCompare(String(b.start_time || '')))
+                    const cellWrapStyle = { display: 'grid', gap: 4 }
+                    const dash = <span className="label">-</span>
+
+                    return (
+                      <tr key={`day-${d}`}>
+                        <td style={{ fontWeight: 800, color: 'var(--brand)' }}>{dayLabel(d)}</td>
+                        <td>{list.length ? <div style={cellWrapStyle}>{list.map((e) => <div key={e.id}>{e._semesterLabel}</div>)}</div> : dash}</td>
+                        <td>{list.length ? <div style={cellWrapStyle}>{list.map((e) => <div key={e.id}>{e._classLabel}</div>)}</div> : dash}</td>
+                        <td>{list.length ? <div style={cellWrapStyle}>{list.map((e) => <div key={e.id}>{e._subjectLabel}</div>)}</div> : dash}</td>
+                        <td>{list.length ? <div style={cellWrapStyle}>{list.map((e) => <div key={e.id}>{e._teacherLabel}</div>)}</div> : dash}</td>
+                        <td>
+                          {list.length ? (
+                            <div style={cellWrapStyle}>{list.map((e) => <div key={e.id}>{`${e.start_time} - ${e.end_time}`}</div>)}</div>
+                          ) : (
+                            dash
+                          )}
+                        </td>
+                        <td>{list.length ? <div style={cellWrapStyle}>{list.map((e) => <div key={e.id}>{e.room || '-'}</div>)}</div> : dash}</td>
+                        <td>{list.length ? <div style={cellWrapStyle}>{list.map((e) => <div key={e.id}>{e.mode || '-'}</div>)}</div> : dash}</td>
+                        <td>
+                          {list.length ? (
+                            <div style={cellWrapStyle}>
+                              {list.map((e) => (
+                                <div key={e.id}>
+                                  {e.online_url ? (
+                                    <a href={e.online_url} target="_blank" rel="noreferrer">
+                                      Ouvrir
+                                    </a>
+                                  ) : (
+                                    '-'
+                                  )}
                                 </div>
-                              ) : (
-                                <div className="row" style={{ justifyContent: 'flex-end' }}>
-                                  <Button
-                                    type="button"
-                                    onClick={(ev) => {
-                                      ev.stopPropagation()
-                                      startEdit(e)
-                                    }}
-                                  >
-                                    Modifier
-                                  </Button>
-                                  <Button
-                                    variant="danger"
-                                    type="button"
-                                    onClick={(ev) => {
-                                      ev.stopPropagation()
-                                      onDelete(e.id)
-                                    }}
-                                  >
-                                    Supprimer
-                                  </Button>
-                                </div>
-                              )
-                            ) : null}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </React.Fragment>
-                )
-              })}
+                              ))}
+                            </div>
+                          ) : (
+                            dash
+                          )}
+                        </td>
+                        <td></td>
+                      </tr>
+                    )
+                  })}
             </tbody>
           </table>
         </div>

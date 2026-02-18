@@ -76,7 +76,9 @@ export default function AssessmentsView({ user, role, Button, Input, Select, onE
         _semesterLabel: sem ? `${sem.code} — ${sem.title}` : `#${a.semester_id}`,
         _classLabel: cls ? `${cls.code} — ${cls.title}` : `#${a.class_id}`,
         _subjectLabel: subj ? `${subj.code} — ${subj.title}` : `#${a.subject_id}`,
-        _teacherLabel: tea ? `${tea.matricule} — ${tea.first_name} ${tea.last_name}` : `#${a.teacher_id}`
+        _teacherLabel: tea
+          ? `${tea.first_name} ${tea.last_name}${tea.specialite ? ` — ${tea.specialite}` : ''}`
+          : `#${a.teacher_id}`
       }
     })
   }, [items, semestersById, classesById, subjectsById, teachersById])
@@ -171,7 +173,8 @@ export default function AssessmentsView({ user, role, Button, Input, Select, onE
             <option value="">-- choisir --</option>
             {teachers.map((t) => (
               <option key={t.id} value={String(t.id)}>
-                {t.matricule} — {t.first_name} {t.last_name}
+                {t.first_name} {t.last_name}
+                {t.specialite ? ` — ${t.specialite}` : ''}
               </option>
             ))}
           </Select>
@@ -472,7 +475,8 @@ export default function AssessmentsView({ user, role, Button, Input, Select, onE
                 <option value="">-- choisir --</option>
                 {teachersForCreate.map((t) => (
                   <option key={t.id} value={String(t.id)}>
-                    {t.matricule} — {t.first_name} {t.last_name}
+                    {t.first_name} {t.last_name}
+                    {t.specialite ? ` — ${t.specialite}` : ''}
                   </option>
                 ))}
               </Select>

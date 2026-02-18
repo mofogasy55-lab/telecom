@@ -24,6 +24,9 @@ function route(string $method, string $path): array
                 'GET /api/teachers/{id}',
                 'PUT/PATCH /api/teachers/{id}',
                 'DELETE /api/teachers/{id}',
+                'GET /api/teacher-subjects?teacher_id={id}',
+                'POST /api/teacher-subjects',
+                'DELETE /api/teacher-subjects/{id}',
                 'GET /api/semesters',
                 'POST /api/semesters',
                 'GET /api/semesters/{id}',
@@ -144,6 +147,40 @@ function route(string $method, string $path): array
         if ($method === 'DELETE') {
             return teachers_delete($id);
         }
+    }
+
+    // Teacher-Subjects
+    if ($path === '/api/teacher-subjects' && $method === 'GET') {
+        return teacher_subjects_list();
+    }
+    if ($path === '/api/teacher-subjects' && $method === 'POST') {
+        return teacher_subjects_create();
+    }
+    if (preg_match('#^/api/teacher-subjects/(\d+)$#', $path, $m) === 1) {
+        $id = (int)$m[1];
+        if ($method === 'DELETE') {
+            return teacher_subjects_delete($id);
+        }
+    }
+
+    // Teacher availabilities
+    if ($path === '/api/teacher-availability-sets' && $method === 'GET') {
+        return teacher_availability_sets_list();
+    }
+    if ($path === '/api/teacher-availability-sets' && $method === 'POST') {
+        return teacher_availability_sets_create();
+    }
+    if (preg_match('#^/api/teacher-availability-sets/(\d+)$#', $path, $m) === 1) {
+        $id = (int)$m[1];
+        if ($method === 'PUT' || $method === 'PATCH') {
+            return teacher_availability_sets_update($id);
+        }
+    }
+    if ($path === '/api/teacher-availabilities' && $method === 'GET') {
+        return teacher_availabilities_get();
+    }
+    if ($path === '/api/teacher-availabilities' && $method === 'PUT') {
+        return teacher_availabilities_put();
     }
 
     // Semesters
@@ -607,6 +644,292 @@ function students_update(int $id): array
         return respond(409, ['error' => 'matricule_already_exists']);
     }
 
+    if ($stmt->rowCount() === 0) {
+        return respond(404, ['error' => 'not_found']);
+    }
+
+    return respond(200, ['ok' => true]);
+}
+
+function teacher_availability_sets_list(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $teacherId = isset($_GET['teacher_id']) ? (int)$_GET['teacher_id'] : 0;
+    if ($teacherId <= 0) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'teacher_id']);
+    }
+
+    try {
+        $stmt = db()->prepare('SELECT id, teacher_id, valid_from, valid_to, created_at FROM teacher_availability_sets WHERE teacher_id = :tid ORDER BY id DESC');
+        $stmt->execute([':tid' => $teacherId]);
+        return respond(200, ['items' => $stmt->fetchAll()]);
+    } catch (Throwable $e) {
+        // Table does not exist yet → return empty list
+        return respond(200, ['items' => []]);
+    }
+}
+
+function teacher_availability_sets_create(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $missing = require_fields($body, ['teacher_id', 'valid_from']);
+    if ($missing) {
+        return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
+    }
+
+    $teacherId = (int)$body['teacher_id'];
+    $validFrom = trim((string)$body['valid_from']);
+    $validTo = isset($body['valid_to']) ? trim((string)$body['valid_to']) : null;
+    if ($validTo === '') {
+        $validTo = null;
+    }
+
+    $stmt = db()->prepare('SELECT 1 FROM teachers WHERE id = :id');
+    $stmt->execute([':id' => $teacherId]);
+    if (!$stmt->fetch()) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'teacher_id']);
+    }
+
+    $stmt = db()->prepare('INSERT INTO teacher_availability_sets (teacher_id, valid_from, valid_to, created_at) VALUES (:teacher_id, :valid_from, :valid_to, :created_at)');
+    $stmt->execute([
+        ':teacher_id' => $teacherId,
+        ':valid_from' => $validFrom,
+        ':valid_to' => $validTo,
+        ':created_at' => date(DATE_ATOM),
+    ]);
+    $setId = (int)db()->lastInsertId();
+
+    // Bootstrap 6 days
+    $ins = db()->prepare('INSERT INTO teacher_availabilities (availability_set_id, day_of_week, time_ranges, created_at) VALUES (:sid, :dow, :tr, :created_at)');
+    for ($d = 1; $d <= 6; $d++) {
+        $ins->execute([
+            ':sid' => $setId,
+            ':dow' => $d,
+            ':tr' => null,
+            ':created_at' => date(DATE_ATOM),
+        ]);
+    }
+
+    return respond(201, ['id' => $setId]);
+}
+
+function teacher_availability_sets_update(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $validFrom = isset($body['valid_from']) ? trim((string)$body['valid_from']) : null;
+    $validTo = isset($body['valid_to']) ? trim((string)$body['valid_to']) : null;
+    if ($validFrom === '') {
+        $validFrom = null;
+    }
+    if ($validTo === '') {
+        $validTo = null;
+    }
+
+    $stmt = db()->prepare('UPDATE teacher_availability_sets SET valid_from = COALESCE(:valid_from, valid_from), valid_to = :valid_to WHERE id = :id');
+    $stmt->execute([
+        ':valid_from' => $validFrom,
+        ':valid_to' => $validTo,
+        ':id' => $id,
+    ]);
+
+    if ($stmt->rowCount() === 0) {
+        return respond(404, ['error' => 'not_found']);
+    }
+
+    return respond(200, ['ok' => true]);
+}
+
+function teacher_availabilities_get(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $setId = isset($_GET['availability_set_id']) ? (int)$_GET['availability_set_id'] : 0;
+    if ($setId <= 0) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'availability_set_id']);
+    }
+
+    $stmt = db()->prepare('SELECT id, availability_set_id, day_of_week, time_ranges, created_at FROM teacher_availabilities WHERE availability_set_id = :sid ORDER BY day_of_week ASC');
+    $stmt->execute([':sid' => $setId]);
+    return respond(200, ['items' => $stmt->fetchAll()]);
+}
+
+function teacher_availabilities_put(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $missing = require_fields($body, ['availability_set_id', 'days']);
+    if ($missing) {
+        return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
+    }
+
+    $setId = (int)$body['availability_set_id'];
+    $days = $body['days'];
+    if (!is_array($days)) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'days']);
+    }
+
+    $stmt = db()->prepare('SELECT 1 FROM teacher_availability_sets WHERE id = :id');
+    $stmt->execute([':id' => $setId]);
+    if (!$stmt->fetch()) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'availability_set_id']);
+    }
+
+    $upd = db()->prepare('UPDATE teacher_availabilities SET time_ranges = :tr WHERE availability_set_id = :sid AND day_of_week = :dow');
+    foreach ($days as $d) {
+        if (!is_array($d)) {
+            continue;
+        }
+        $dow = isset($d['day_of_week']) ? (int)$d['day_of_week'] : 0;
+        if ($dow < 1 || $dow > 6) {
+            continue;
+        }
+        $tr = isset($d['time_ranges']) ? trim((string)$d['time_ranges']) : null;
+        if ($tr === '') {
+            $tr = null;
+        }
+        $upd->execute([
+            ':tr' => $tr,
+            ':sid' => $setId,
+            ':dow' => $dow,
+        ]);
+    }
+
+    return respond(200, ['ok' => true]);
+}
+
+function teacher_subjects_list(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $where = [];
+    $params = [];
+
+    $teacherId = isset($_GET['teacher_id']) ? (int)$_GET['teacher_id'] : 0;
+    if ($teacherId > 0) {
+        $where[] = 'ts.teacher_id = :teacher_id';
+        $params[':teacher_id'] = $teacherId;
+    }
+
+    $sql = 'SELECT ts.id, ts.teacher_id, ts.subject_id, ts.created_at, s.code AS subject_code, s.title AS subject_title '
+        . 'FROM teacher_subjects ts '
+        . 'JOIN subjects s ON s.id = ts.subject_id';
+    if (count($where) > 0) {
+        $sql .= ' WHERE ' . implode(' AND ', $where);
+    }
+    $sql .= ' ORDER BY ts.id DESC';
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return respond(200, ['items' => $stmt->fetchAll()]);
+}
+
+function teacher_subjects_create(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $missing = require_fields($body, ['teacher_id', 'subject_id']);
+    if ($missing) {
+        return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
+    }
+
+    $teacherId = (int)$body['teacher_id'];
+    $subjectId = (int)$body['subject_id'];
+
+    $stmt = db()->prepare('SELECT 1 FROM teachers WHERE id = :id');
+    $stmt->execute([':id' => $teacherId]);
+    if (!$stmt->fetch()) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'teacher_id']);
+    }
+
+    $stmt = db()->prepare('SELECT 1 FROM subjects WHERE id = :id');
+    $stmt->execute([':id' => $subjectId]);
+    if (!$stmt->fetch()) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'subject_id']);
+    }
+
+    $stmt = db()->prepare('INSERT INTO teacher_subjects (teacher_id, subject_id, created_at) VALUES (:teacher_id, :subject_id, :created_at)');
+    try {
+        $stmt->execute([
+            ':teacher_id' => $teacherId,
+            ':subject_id' => $subjectId,
+            ':created_at' => date(DATE_ATOM),
+        ]);
+    } catch (Throwable $e) {
+        return respond(409, ['error' => 'relation_already_exists']);
+    }
+
+    return respond(201, ['id' => (int)db()->lastInsertId()]);
+}
+
+function teacher_subjects_delete(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $stmt = db()->prepare('DELETE FROM teacher_subjects WHERE id = :id');
+    $stmt->execute([':id' => $id]);
     if ($stmt->rowCount() === 0) {
         return respond(404, ['error' => 'not_found']);
     }
@@ -1183,8 +1506,15 @@ function teachers_list(): array
         return $forbidden;
     }
 
-    $stmt = db()->query('SELECT id, matricule, first_name, last_name, email, created_at FROM teachers ORDER BY id DESC');
+    $stmt = db()->query('SELECT id, first_name, last_name, specialite, email, grade, telephone, date_recrutement, statut, created_at FROM teachers ORDER BY id DESC');
     $rows = $stmt->fetchAll();
+
+    foreach ($rows as &$r) {
+        $statut = strtolower(trim((string)($r['statut'] ?? '')));
+        $r['is_vacataire'] = ($statut === 'vacataire');
+        $r['teacher_type'] = $statut;
+    }
+    unset($r);
 
     return respond(200, ['items' => $rows]);
 }
@@ -1195,28 +1525,91 @@ function teachers_create(): array
     if ($u === null) {
         return respond(401, ['error' => 'unauthorized']);
     }
-    $forbidden = require_role($u, ['admin', 'prof']);
+    $forbidden = require_role($u, ['admin']);
     if ($forbidden) {
         return $forbidden;
     }
 
     $body = json_input();
-    $missing = require_fields($body, ['matricule', 'first_name', 'last_name']);
+    $missing = require_fields($body, ['first_name', 'last_name']);
     if ($missing) {
         return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
     }
 
-    $stmt = db()->prepare('INSERT INTO teachers (matricule, first_name, last_name, email, created_at) VALUES (:matricule, :first_name, :last_name, :email, :created_at)');
-    try {
-        $stmt->execute([
-            ':matricule' => trim((string)$body['matricule']),
-            ':first_name' => trim((string)$body['first_name']),
-            ':last_name' => trim((string)$body['last_name']),
-            ':email' => isset($body['email']) ? trim((string)$body['email']) : null,
-            ':created_at' => date(DATE_ATOM),
-        ]);
-    } catch (Throwable $e) {
-        return respond(409, ['error' => 'matricule_already_exists']);
+    // Accept teacher_type from frontend without causing validation error
+    $teacherType = isset($body['teacher_type']) ? strtolower(trim((string)$body['teacher_type'])) : null;
+    if ($teacherType === '') {
+        $teacherType = null;
+    }
+
+    $isVacataire = (bool)($body['is_vacataire'] ?? false);
+
+    $allowedTypes = ['vacataire', 'luban', 'professionnel', 'academique'];
+    $statut = $isVacataire ? 'Vacataire' : 'Academique';
+
+    if ($teacherType !== null) {
+        if (!in_array($teacherType, $allowedTypes, true)) {
+            return respond(422, ['error' => 'validation_error', 'field' => 'teacher_type']);
+        }
+        $statut = ucfirst($teacherType);
+    }
+
+    if (isset($body['statut'])) {
+        $st = strtolower(trim((string)$body['statut']));
+        if ($st !== '') {
+            if (!in_array($st, array_merge($allowedTypes, ['permanent']), true)) {
+                return respond(422, ['error' => 'validation_error', 'field' => 'statut']);
+            }
+            $statut = ucfirst($st);
+        }
+    }
+
+    $specialite = isset($body['specialite']) ? trim((string)$body['specialite']) : null;
+    if ($specialite === '') {
+        $specialite = null;
+    }
+
+    $grade = isset($body['grade']) ? trim((string)$body['grade']) : null;
+    if ($grade === '') {
+        $grade = null;
+    }
+    $telephone = isset($body['telephone']) ? trim((string)$body['telephone']) : null;
+    if ($telephone === '') {
+        $telephone = null;
+    }
+    $dateRecrutement = isset($body['date_recrutement']) ? trim((string)$body['date_recrutement']) : null;
+    if ($dateRecrutement === '') {
+        $dateRecrutement = null;
+    }
+
+    $stmt = db()->prepare('INSERT INTO teachers (matricule, first_name, last_name, email, created_at, specialite, grade, telephone, date_recrutement, statut) VALUES (:matricule, :first_name, :last_name, :email, :created_at, :specialite, :grade, :telephone, :date_recrutement, :statut)');
+
+    $createdAt = date(DATE_ATOM);
+    $tries = 0;
+    while (true) {
+        $tries += 1;
+        if ($tries > 8) {
+            return respond(409, ['error' => 'matricule_already_exists']);
+        }
+
+        $matricule = 'PROF' . str_pad((string)random_int(1, 999999), 6, '0', STR_PAD_LEFT);
+        try {
+            $stmt->execute([
+                ':matricule' => $matricule,
+                ':first_name' => trim((string)$body['first_name']),
+                ':last_name' => trim((string)$body['last_name']),
+                ':email' => isset($body['email']) ? trim((string)$body['email']) : null,
+                ':created_at' => $createdAt,
+                ':specialite' => $specialite,
+                ':grade' => $grade,
+                ':telephone' => $telephone,
+                ':date_recrutement' => $dateRecrutement,
+                ':statut' => $statut,
+            ]);
+            break;
+        } catch (Throwable $e) {
+            continue;
+        }
     }
 
     $id = (int)db()->lastInsertId();
@@ -1235,13 +1628,17 @@ function teachers_get(int $id): array
         return $forbidden;
     }
 
-    $stmt = db()->prepare('SELECT id, matricule, first_name, last_name, email, created_at FROM teachers WHERE id = :id');
+    $stmt = db()->prepare('SELECT id, first_name, last_name, specialite, email, grade, telephone, date_recrutement, statut, created_at FROM teachers WHERE id = :id');
     $stmt->execute([':id' => $id]);
     $row = $stmt->fetch();
 
     if (!is_array($row)) {
         return respond(404, ['error' => 'not_found']);
     }
+
+    $statut = strtolower(trim((string)($row['statut'] ?? '')));
+    $row['is_vacataire'] = ($statut === 'vacataire');
+    $row['teacher_type'] = $statut;
 
     return respond(200, $row);
 }
@@ -1252,25 +1649,70 @@ function teachers_update(int $id): array
     if ($u === null) {
         return respond(401, ['error' => 'unauthorized']);
     }
-    $forbidden = require_role($u, ['admin', 'prof']);
+    $forbidden = require_role($u, ['admin']);
     if ($forbidden) {
         return $forbidden;
     }
 
     $body = json_input();
 
-    $stmt = db()->prepare('UPDATE teachers SET matricule = :matricule, first_name = :first_name, last_name = :last_name, email = :email WHERE id = :id');
-    try {
-        $stmt->execute([
-            ':matricule' => trim((string)($body['matricule'] ?? '')),
-            ':first_name' => trim((string)($body['first_name'] ?? '')),
-            ':last_name' => trim((string)($body['last_name'] ?? '')),
-            ':email' => isset($body['email']) ? trim((string)$body['email']) : null,
-            ':id' => $id,
-        ]);
-    } catch (Throwable $e) {
-        return respond(409, ['error' => 'matricule_already_exists']);
+    $specialite = isset($body['specialite']) ? trim((string)$body['specialite']) : null;
+    if ($specialite === '') {
+        $specialite = null;
     }
+
+    $grade = isset($body['grade']) ? trim((string)$body['grade']) : null;
+    if ($grade === '') {
+        $grade = null;
+    }
+    $telephone = isset($body['telephone']) ? trim((string)$body['telephone']) : null;
+    if ($telephone === '') {
+        $telephone = null;
+    }
+    $dateRecrutement = isset($body['date_recrutement']) ? trim((string)$body['date_recrutement']) : null;
+    if ($dateRecrutement === '') {
+        $dateRecrutement = null;
+    }
+
+    $teacherType = isset($body['teacher_type']) ? strtolower(trim((string)$body['teacher_type'])) : null;
+    if ($teacherType === '') {
+        $teacherType = null;
+    }
+
+    $isVacataire = (bool)($body['is_vacataire'] ?? false);
+
+    $allowedTypes = ['vacataire', 'luban', 'professionnel', 'academique'];
+    $statut = $isVacataire ? 'Vacataire' : 'Academique';
+
+    if ($teacherType !== null) {
+        if (!in_array($teacherType, $allowedTypes, true)) {
+            return respond(422, ['error' => 'validation_error', 'field' => 'teacher_type']);
+        }
+        $statut = ucfirst($teacherType);
+    }
+
+    if (isset($body['statut'])) {
+        $st = strtolower(trim((string)$body['statut']));
+        if ($st !== '') {
+            if (!in_array($st, array_merge($allowedTypes, ['permanent']), true)) {
+                return respond(422, ['error' => 'validation_error', 'field' => 'statut']);
+            }
+            $statut = ucfirst($st);
+        }
+    }
+
+    $stmt = db()->prepare('UPDATE teachers SET first_name = :first_name, last_name = :last_name, email = :email, specialite = :specialite, grade = :grade, telephone = :telephone, date_recrutement = :date_recrutement, statut = :statut WHERE id = :id');
+    $stmt->execute([
+        ':first_name' => trim((string)($body['first_name'] ?? '')),
+        ':last_name' => trim((string)($body['last_name'] ?? '')),
+        ':email' => isset($body['email']) ? trim((string)$body['email']) : null,
+        ':specialite' => $specialite,
+        ':grade' => $grade,
+        ':telephone' => $telephone,
+        ':date_recrutement' => $dateRecrutement,
+        ':statut' => $statut,
+        ':id' => $id,
+    ]);
 
     if ($stmt->rowCount() === 0) {
         return respond(404, ['error' => 'not_found']);
@@ -1285,7 +1727,7 @@ function teachers_delete(int $id): array
     if ($u === null) {
         return respond(401, ['error' => 'unauthorized']);
     }
-    $forbidden = require_role($u, ['admin', 'prof']);
+    $forbidden = require_role($u, ['admin']);
     if ($forbidden) {
         return $forbidden;
     }

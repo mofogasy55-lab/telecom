@@ -66,7 +66,7 @@ export default function CoursesView({ role, Button, Input, Select, onError }) {
         _semesterLabel: sem ? `${sem.code} — ${sem.title}` : `#${c.semester_id}`,
         _classLabel: cls ? `${cls.code} — ${cls.title}` : `#${c.class_id}`,
         _subjectLabel: subj ? `${subj.code} — ${subj.title}` : `#${c.subject_id}`,
-        _teacherLabel: t ? `${t.matricule} — ${t.first_name} ${t.last_name}` : `#${c.teacher_id}`
+        _teacherLabel: t ? `${t.first_name} ${t.last_name}${t.specialite ? ` — ${t.specialite}` : ''}` : `#${c.teacher_id}`
       }
     })
   }, [items, semestersById, classesById, subjectsById, teachersById])
@@ -245,7 +245,8 @@ export default function CoursesView({ role, Button, Input, Select, onError }) {
                 <option value="">-- choisir --</option>
                 {teachers.map((t) => (
                   <option key={t.id} value={String(t.id)}>
-                    {t.matricule} — {t.first_name} {t.last_name}
+                    {t.first_name} {t.last_name}
+                    {t.specialite ? ` — ${t.specialite}` : ''}
                   </option>
                 ))}
               </Select>
@@ -344,7 +345,8 @@ export default function CoursesView({ role, Button, Input, Select, onError }) {
                           <option value="">-- choisir --</option>
                           {teachers.map((t) => (
                             <option key={t.id} value={String(t.id)}>
-                              {t.matricule} — {t.first_name} {t.last_name}
+                              {t.first_name} {t.last_name}
+                              {t.specialite ? ` — ${t.specialite}` : ''}
                             </option>
                           ))}
                         </Select>
