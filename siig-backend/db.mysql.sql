@@ -119,6 +119,34 @@ CREATE TABLE IF NOT EXISTS class_subjects (
   FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS semester_months (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  semester_id INT NOT NULL,
+  month_index INT NOT NULL,
+  label VARCHAR(50) NOT NULL,
+  start_date TEXT NULL,
+  end_date TEXT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(semester_id, month_index),
+  FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS semester_class_subject_plan (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  semester_id INT NOT NULL,
+  class_id INT NOT NULL,
+  month_index INT NOT NULL,
+  slot_index INT NOT NULL,
+  subject_id INT NULL,
+  tp TINYINT(1) NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NULL,
+  UNIQUE(semester_id, class_id, month_index, slot_index),
+  FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+  FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
+  FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS student_class_assignments (
   id INT AUTO_INCREMENT PRIMARY KEY,
   student_id INT NOT NULL,
@@ -194,6 +222,67 @@ CREATE TABLE IF NOT EXISTS grades (
   UNIQUE(assessment_id, student_id),
   FOREIGN KEY(assessment_id) REFERENCES assessments(id) ON DELETE CASCADE,
   FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS attendance_sessions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  semester_id INT NOT NULL,
+  class_id INT NOT NULL,
+  subject_id INT NULL,
+  teacher_id INT NULL,
+  session_date TEXT NOT NULL,
+  start_time TEXT NULL,
+  end_time TEXT NULL,
+  notes TEXT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+  FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
+  FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE SET NULL,
+  FOREIGN KEY(teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS attendance_entries (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  session_id INT NOT NULL,
+  student_id INT NOT NULL,
+  status VARCHAR(50) NOT NULL,
+  remark TEXT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(session_id, student_id),
+  FOREIGN KEY(session_id) REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS visits (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  visit_date TEXT NOT NULL,
+  semester_id INT NOT NULL,
+  class_id INT NOT NULL,
+  subject_id INT NULL,
+  teacher_id INT NULL,
+  title VARCHAR(255) NOT NULL,
+  notes TEXT NULL,
+  created_by_user_id INT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+  FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
+  FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE SET NULL,
+  FOREIGN KEY(teacher_id) REFERENCES teachers(id) ON DELETE SET NULL,
+  FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS course_progress (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  semester_id INT NOT NULL,
+  class_id INT NOT NULL,
+  subject_id INT NOT NULL,
+  matiere_a_finir INT NULL,
+  en_cours INT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(semester_id, class_id, subject_id),
+  FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+  FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
+  FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS teacher_subjects (

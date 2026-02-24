@@ -198,6 +198,67 @@ CREATE TABLE IF NOT EXISTS grades (
   FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS attendance_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  semester_id INTEGER NOT NULL,
+  class_id INTEGER NOT NULL,
+  subject_id INTEGER NULL,
+  teacher_id INTEGER NULL,
+  session_date TEXT NOT NULL,
+  start_time TEXT NULL,
+  end_time TEXT NULL,
+  notes TEXT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+  FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
+  FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE SET NULL,
+  FOREIGN KEY(teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS attendance_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL,
+  student_id INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  remark TEXT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(session_id, student_id),
+  FOREIGN KEY(session_id) REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS visits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  visit_date TEXT NOT NULL,
+  semester_id INTEGER NOT NULL,
+  class_id INTEGER NOT NULL,
+  subject_id INTEGER NULL,
+  teacher_id INTEGER NULL,
+  title TEXT NOT NULL,
+  notes TEXT NULL,
+  created_by_user_id INTEGER NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+  FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
+  FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE SET NULL,
+  FOREIGN KEY(teacher_id) REFERENCES teachers(id) ON DELETE SET NULL,
+  FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS course_progress (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  semester_id INTEGER NOT NULL,
+  class_id INTEGER NOT NULL,
+  subject_id INTEGER NOT NULL,
+  matiere_a_finir INTEGER NULL,
+  en_cours INTEGER NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(semester_id, class_id, subject_id),
+  FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+  FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
+  FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS teacher_subjects (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   teacher_id INTEGER NOT NULL,

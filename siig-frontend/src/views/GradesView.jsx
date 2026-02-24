@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../api.js'
 import DataTable from '../components/DataTable.jsx'
 
-export default function GradesView({ user, role, Button, Input, Select, onError }) {
+export default function GradesView({ user, role, Button, Input, Select, onError, embedded = false }) {
   const [items, setItems] = useState([])
   const [assessments, setAssessments] = useState([])
   const [students, setStudents] = useState([])
@@ -266,6 +266,31 @@ export default function GradesView({ user, role, Button, Input, Select, onError 
     if (canWrite) return columns
     return columns.filter((c) => c.key !== '_studentLabel')
   }, [canWrite])
+
+  if (embedded) {
+    return (
+      <DataTable
+        title="Tableau"
+        subtitle={loading ? 'Chargement…' : null}
+        rows={enriched}
+        columns={visibleColumns}
+        Button={Button}
+        Input={Input}
+        Select={Select}
+        initialSortKey="id"
+        initialSortDir="desc"
+        defaultPageSize={10}
+        actions={
+          <Button type="button" onClick={refreshAll} disabled={loading}>
+            Rafraîchir
+          </Button>
+        }
+        exportFileName="grades.csv"
+        searchPlaceholder="Recherche (évaluation, étudiant, commentaire…)"
+        getRowSearchText={(r) => `${r.id} ${r._assessmentLabel} ${r._studentLabel} ${r.score} ${r.comment || ''} ${r.graded_at || ''}`}
+      />
+    )
+  }
 
   return (
     <div className="card">

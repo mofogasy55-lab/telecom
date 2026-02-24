@@ -18,6 +18,10 @@ import UesView from './views/UesView.jsx'
 import EcsView from './views/EcsView.jsx'
 import ClassSubjectsView from './views/ClassSubjectsView.jsx'
 import StudentClassAssignmentsView from './views/StudentClassAssignmentsView.jsx'
+import AttendanceView from './views/AttendanceView.jsx'
+import TpByClassView from './views/TpByClassView.jsx'
+import VisitsByClassView from './views/VisitsByClassView.jsx'
+import CourseProgressView from './views/CourseProgressView.jsx'
 
 function roleLabel(role) {
   if (role === 'admin') return 'Admin'
@@ -341,7 +345,7 @@ export default function App() {
           {(view === 'admin:teachers' || view === 'prof:teachers') && <TeachersView role={user.role} Button={Button} Input={Input} onError={setError} />}
 
           {(view === 'admin:semesters' || view === 'prof:semesters') && (
-            <SemestersView role={user.role} Button={Button} Input={Input} Select={Select} onError={setError} />
+            <SemestersView user={user} role={user.role} Button={Button} Input={Input} Select={Select} onError={setError} />
           )}
 
           {(view === 'admin:classes' || view === 'prof:classes') && <ClassesView role={user.role} Button={Button} Input={Input} onError={setError} />}
@@ -378,6 +382,22 @@ export default function App() {
 
           {(view === 'admin:grades' || view === 'prof:grades' || view === 'etudiant:grades') && (
             <GradesView user={user} role={user.role} Button={Button} Input={Input} Select={Select} onError={setError} />
+          )}
+
+          {(view === 'admin:attendance' || view === 'prof:attendance') && (
+            <AttendanceView user={user} role={user.role} Button={Button} Input={Input} Select={Select} onError={setError} />
+          )}
+
+          {(view === 'admin:tp-by-class' || view === 'prof:tp-by-class') && (
+            <TpByClassView user={user} role={user.role} Button={Button} Input={Input} Select={Select} onError={setError} />
+          )}
+
+          {(view === 'admin:visits-by-class' || view === 'prof:visits-by-class') && (
+            <VisitsByClassView user={user} role={user.role} Button={Button} Input={Input} Select={Select} onError={setError} />
+          )}
+
+          {(view === 'admin:course-progress' || view === 'prof:course-progress') && (
+            <CourseProgressView user={user} role={user.role} Button={Button} Input={Input} Select={Select} onError={setError} />
           )}
 
           {currentNavItem &&

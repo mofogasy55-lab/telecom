@@ -85,10 +85,47 @@ function route(string $method, string $path): array
                 'GET /api/grades/{id}',
                 'PUT/PATCH /api/grades/{id}',
                 'DELETE /api/grades/{id}',
+                'GET /api/attendance',
+                'POST /api/attendance',
+                'GET /api/attendance/{id}',
+                'PUT/PATCH /api/attendance/{id}',
+                'DELETE /api/attendance/{id}',
+                'GET /api/attendance-sessions',
+                'GET /api/attendance-sessions/{id}',
+                'GET /api/visits',
+                'POST /api/visits',
+                'GET /api/visits/{id}',
+                'PUT/PATCH /api/visits/{id}',
+                'DELETE /api/visits/{id}',
+                'GET /api/course-progress',
+                'POST /api/course-progress',
+                'POST /api/course-progress/init',
+                'GET /api/course-progress/{id}',
+                'PUT/PATCH /api/course-progress/{id}',
+                'DELETE /api/course-progress/{id}',
             ],
         ]);
     }
 
+    // Semester monthly plan (subjects by class / month)
+    if ($path === '/api/semester-months' && $method === 'GET') {
+        return semester_months_list();
+    }
+    if ($path === '/api/semester-months/init' && $method === 'POST') {
+        return semester_months_init();
+    }
+    if ($path === '/api/semester-class-subject-plan' && $method === 'GET') {
+        return semester_class_subject_plan_list();
+    }
+    if ($path === '/api/semester-class-subject-plan' && ($method === 'POST' || $method === 'PUT' || $method === 'PATCH')) {
+        return semester_class_subject_plan_upsert();
+    }
+    if (preg_match('#^/api/semester-class-subject-plan/(\d+)$#', $path, $m) === 1) {
+        $id = (int)$m[1];
+        if ($method === 'DELETE') {
+            return semester_class_subject_plan_delete($id);
+        }
+    }
     // Health
     if ($method === 'GET' && $path === '/api/health') {
         return respond(200, ['ok' => true, 'time' => date(DATE_ATOM)]);
@@ -415,6 +452,82 @@ function route(string $method, string $path): array
         }
     }
 
+    // Attendance
+    if ($path === '/api/attendance' && $method === 'GET') {
+        return attendance_list();
+    }
+    if ($path === '/api/attendance' && $method === 'POST') {
+        return attendance_create();
+    }
+    if ($path === '/api/attendance/students' && $method === 'GET') {
+        return attendance_students();
+    }
+
+    if ($path === '/api/attendance-sessions' && $method === 'GET') {
+        return attendance_sessions_list();
+    }
+    if (preg_match('#^/api/attendance-sessions/(\d+)$#', $path, $m) === 1) {
+        $id = (int)$m[1];
+        if ($method === 'GET') {
+            return attendance_sessions_get($id);
+        }
+    }
+    if (preg_match('#^/api/attendance/(\d+)$#', $path, $m) === 1) {
+        $id = (int)$m[1];
+        if ($method === 'GET') {
+            return attendance_get($id);
+        }
+        if ($method === 'PUT' || $method === 'PATCH') {
+            return attendance_update($id);
+        }
+        if ($method === 'DELETE') {
+            return attendance_delete($id);
+        }
+    }
+
+    // Visits
+    if ($path === '/api/visits' && $method === 'GET') {
+        return visits_list();
+    }
+    if ($path === '/api/visits' && $method === 'POST') {
+        return visits_create();
+    }
+    if (preg_match('#^/api/visits/(\d+)$#', $path, $m) === 1) {
+        $id = (int)$m[1];
+        if ($method === 'GET') {
+            return visits_get($id);
+        }
+        if ($method === 'PUT' || $method === 'PATCH') {
+            return visits_update($id);
+        }
+        if ($method === 'DELETE') {
+            return visits_delete($id);
+        }
+    }
+
+    // Course progress
+    if ($path === '/api/course-progress' && $method === 'GET') {
+        return course_progress_list();
+    }
+    if ($path === '/api/course-progress' && $method === 'POST') {
+        return course_progress_upsert();
+    }
+    if ($path === '/api/course-progress/init' && $method === 'POST') {
+        return course_progress_init();
+    }
+    if (preg_match('#^/api/course-progress/(\d+)$#', $path, $m) === 1) {
+        $id = (int)$m[1];
+        if ($method === 'GET') {
+            return course_progress_get($id);
+        }
+        if ($method === 'PUT' || $method === 'PATCH') {
+            return course_progress_update($id);
+        }
+        if ($method === 'DELETE') {
+            return course_progress_delete($id);
+        }
+    }
+
     return respond(404, ['error' => 'not_found']);
 }
 
@@ -464,13 +577,15 @@ function auth_login(): array
 {
     $pdo = db();
     $body = json_input();
-    $missing = require_fields($body, ['email', 'password']);
-    if ($missing) {
-        return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
+    if (!array_key_exists('email', $body) || !array_key_exists('password', $body)) {
+        return respond(422, ['error' => 'validation_error', 'missing' => ['email', 'password']]);
     }
 
-    $email = strtolower(trim((string)$body['email']));
-    $password = (string)$body['password'];
+    $email = strtolower(trim((string)($body['email'] ?? '')));
+    $password = (string)($body['password'] ?? '');
+    if ($email === '' || $password === '') {
+        return respond(401, ['error' => 'invalid_credentials']);
+    }
 
     $stmt = $pdo->prepare('SELECT id, email, password_hash, role FROM users WHERE email = :email');
     $stmt->execute([':email' => $email]);
@@ -511,6 +626,15 @@ function students_list(): array
 
     $where = [];
     $params = [];
+
+    if (($u['role'] ?? '') === 'prof') {
+        $teacherId = isset($u['teacher_id']) ? (int)$u['teacher_id'] : 0;
+        if ($teacherId <= 0) {
+            return respond(200, ['items' => []]);
+        }
+        $where[] = 'teacher_id = :tid';
+        $params[':tid'] = $teacherId;
+    }
 
     $trackCategory = isset($_GET['track_category']) ? strtolower(trim((string)$_GET['track_category'])) : '';
     if ($trackCategory !== '') {
@@ -648,6 +772,1030 @@ function students_update(int $id): array
         return respond(404, ['error' => 'not_found']);
     }
 
+    return respond(200, ['ok' => true]);
+}
+
+function semester_months_list(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $semesterId = isset($_GET['semester_id']) ? (int)$_GET['semester_id'] : 0;
+    $where = [];
+    $params = [];
+    if ($semesterId > 0) {
+        $where[] = 'semester_id = :semester_id';
+        $params[':semester_id'] = $semesterId;
+    }
+
+    $sql = 'SELECT id, semester_id, month_index, label, start_date, end_date, created_at FROM semester_months';
+    if (count($where) > 0) {
+        $sql .= ' WHERE ' . implode(' AND ', $where);
+    }
+    $sql .= ' ORDER BY semester_id DESC, month_index ASC';
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return respond(200, ['items' => $stmt->fetchAll()]);
+}
+
+function semester_months_init(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $missing = require_fields($body, ['semester_id']);
+    if ($missing) {
+        return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
+    }
+
+    $semesterId = (int)$body['semester_id'];
+    $months = isset($body['months']) && is_array($body['months']) ? $body['months'] : null;
+
+    $stmt = db()->prepare('SELECT 1 FROM semesters WHERE id = :id');
+    $stmt->execute([':id' => $semesterId]);
+    if (!$stmt->fetch()) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'semester_id']);
+    }
+
+    if ($months === null) {
+        $months = [
+            ['month_index' => 1, 'label' => 'M1'],
+            ['month_index' => 2, 'label' => 'M2'],
+            ['month_index' => 3, 'label' => 'M3'],
+            ['month_index' => 4, 'label' => 'M4'],
+        ];
+    }
+
+    $pdo = db();
+    $driver = (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $created = 0;
+    if ($driver === 'sqlite') {
+        $stmtIns = $pdo->prepare('INSERT OR IGNORE INTO semester_months (semester_id, month_index, label, start_date, end_date, created_at) VALUES (:semester_id, :month_index, :label, :start_date, :end_date, :created_at)');
+    } else {
+        $stmtIns = $pdo->prepare('INSERT IGNORE INTO semester_months (semester_id, month_index, label, start_date, end_date, created_at) VALUES (:semester_id, :month_index, :label, :start_date, :end_date, :created_at)');
+    }
+
+    foreach ($months as $m) {
+        $mi = (int)($m['month_index'] ?? 0);
+        if ($mi <= 0) {
+            continue;
+        }
+        $stmtIns->execute([
+            ':semester_id' => $semesterId,
+            ':month_index' => $mi,
+            ':label' => trim((string)($m['label'] ?? ('M' . $mi))),
+            ':start_date' => $m['start_date'] ?? null,
+            ':end_date' => $m['end_date'] ?? null,
+            ':created_at' => date(DATE_ATOM),
+        ]);
+        $created += (int)$stmtIns->rowCount();
+    }
+
+    return respond(200, ['ok' => true, 'created' => $created]);
+}
+
+function semester_class_subject_plan_list(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $semesterId = isset($_GET['semester_id']) ? (int)$_GET['semester_id'] : 0;
+    $classId = isset($_GET['class_id']) ? (int)$_GET['class_id'] : 0;
+    $monthIndex = isset($_GET['month_index']) ? (int)$_GET['month_index'] : 0;
+
+    $where = [];
+    $params = [];
+    if ($semesterId > 0) {
+        $where[] = 'semester_id = :semester_id';
+        $params[':semester_id'] = $semesterId;
+    }
+    if ($classId > 0) {
+        $where[] = 'class_id = :class_id';
+        $params[':class_id'] = $classId;
+    }
+    if ($monthIndex > 0) {
+        $where[] = 'month_index = :month_index';
+        $params[':month_index'] = $monthIndex;
+    }
+
+    $sql = 'SELECT id, semester_id, class_id, month_index, slot_index, subject_id, tp, created_at, updated_at FROM semester_class_subject_plan';
+    if (count($where) > 0) {
+        $sql .= ' WHERE ' . implode(' AND ', $where);
+    }
+    $sql .= ' ORDER BY semester_id DESC, class_id ASC, month_index ASC, slot_index ASC';
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return respond(200, ['items' => $stmt->fetchAll()]);
+}
+
+function semester_class_subject_plan_upsert(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $missing = require_fields($body, ['semester_id', 'class_id', 'month_index', 'slot_index']);
+    if ($missing) {
+        return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
+    }
+
+    $semesterId = (int)$body['semester_id'];
+    $classId = (int)$body['class_id'];
+    $monthIndex = (int)$body['month_index'];
+    $slotIndex = (int)$body['slot_index'];
+    $subjectId = isset($body['subject_id']) ? (int)$body['subject_id'] : 0;
+    $tp = isset($body['tp']) ? (int)$body['tp'] : null;
+
+    if ($tp !== null && ((string)$u['role']) !== 'admin') {
+        $tp = null;
+    }
+
+    $stmt = db()->prepare('SELECT 1 FROM semesters WHERE id = :id');
+    $stmt->execute([':id' => $semesterId]);
+    if (!$stmt->fetch()) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'semester_id']);
+    }
+    $stmt = db()->prepare('SELECT 1 FROM classes WHERE id = :id');
+    $stmt->execute([':id' => $classId]);
+    if (!$stmt->fetch()) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'class_id']);
+    }
+    if ($subjectId > 0) {
+        $stmt = db()->prepare('SELECT 1 FROM subjects WHERE id = :id');
+        $stmt->execute([':id' => $subjectId]);
+        if (!$stmt->fetch()) {
+            return respond(422, ['error' => 'validation_error', 'field' => 'subject_id']);
+        }
+    }
+
+    $pdo = db();
+    $driver = (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+
+    if ($driver === 'sqlite') {
+        $stmt = $pdo->prepare(
+            'INSERT INTO semester_class_subject_plan (semester_id, class_id, month_index, slot_index, subject_id, tp, created_at, updated_at)
+             VALUES (:semester_id, :class_id, :month_index, :slot_index, :subject_id, :tp, :created_at, :updated_at)
+             ON CONFLICT(semester_id, class_id, month_index, slot_index)
+             DO UPDATE SET subject_id = excluded.subject_id, tp = excluded.tp, updated_at = excluded.updated_at'
+        );
+        $stmt->execute([
+            ':semester_id' => $semesterId,
+            ':class_id' => $classId,
+            ':month_index' => $monthIndex,
+            ':slot_index' => $slotIndex,
+            ':subject_id' => $subjectId > 0 ? $subjectId : null,
+            ':tp' => $tp !== null ? ($tp ? 1 : 0) : 0,
+            ':created_at' => date(DATE_ATOM),
+            ':updated_at' => date(DATE_ATOM),
+        ]);
+    } else {
+        $stmt = $pdo->prepare(
+            'INSERT INTO semester_class_subject_plan (semester_id, class_id, month_index, slot_index, subject_id, tp, created_at, updated_at)
+             VALUES (:semester_id, :class_id, :month_index, :slot_index, :subject_id, :tp, :created_at, :updated_at)
+             ON DUPLICATE KEY UPDATE subject_id = VALUES(subject_id), tp = VALUES(tp), updated_at = VALUES(updated_at)'
+        );
+        $stmt->execute([
+            ':semester_id' => $semesterId,
+            ':class_id' => $classId,
+            ':month_index' => $monthIndex,
+            ':slot_index' => $slotIndex,
+            ':subject_id' => $subjectId > 0 ? $subjectId : null,
+            ':tp' => $tp !== null ? ($tp ? 1 : 0) : 0,
+            ':created_at' => date(DATE_ATOM),
+            ':updated_at' => date(DATE_ATOM),
+        ]);
+    }
+
+    return respond(200, ['ok' => true]);
+}
+
+function semester_class_subject_plan_delete(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $stmt = db()->prepare('DELETE FROM semester_class_subject_plan WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    if ($stmt->rowCount() === 0) {
+        return respond(404, ['error' => 'not_found']);
+    }
+    return respond(200, ['ok' => true]);
+}
+
+function attendance_list(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+
+    $role = (string)($u['role'] ?? '');
+    $session = isset($_GET['session']) ? trim((string)$_GET['session']) : '';
+
+    // Étudiant: agrégation sur ses séances uniquement
+    if ($role === 'etudiant') {
+        $studentId = isset($u['student_id']) ? (int)$u['student_id'] : 0;
+        if ($studentId <= 0) {
+            return respond(200, ['items' => []]);
+        }
+
+        $where = ['ae.student_id = :sid'];
+        $params = [':sid' => $studentId];
+        if ($session !== '') {
+            $where[] = 's.code = :session';
+            $params[':session'] = $session;
+        }
+
+        $sql = 'SELECT ae.student_id AS student_id,
+                       st.first_name AS first_name,
+                       st.last_name AS last_name,
+                       s.code AS session_code,
+                       SUM(CASE WHEN lower(ae.status) = "present" THEN 1 ELSE 0 END) AS present_count,
+                       SUM(CASE WHEN lower(ae.status) = "absent" THEN 1 ELSE 0 END) AS absent_count
+                FROM attendance_entries ae
+                JOIN attendance_sessions ats ON ats.id = ae.session_id
+                JOIN semesters s ON s.id = ats.semester_id
+                JOIN students st ON st.id = ae.student_id
+                WHERE ' . implode(' AND ', $where) . '
+                GROUP BY ae.student_id, st.first_name, st.last_name, s.code
+                ORDER BY s.code ASC';
+
+        $stmt = db()->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll();
+        foreach ($rows as &$r) {
+            $r['student_name'] = trim(((string)($r['first_name'] ?? '')) . ' ' . ((string)($r['last_name'] ?? '')));
+            unset($r['first_name'], $r['last_name']);
+        }
+        unset($r);
+        return respond(200, ['items' => $rows]);
+    }
+
+    // Admin/Prof: lecture globale (filtrable)
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $where = [];
+    $params = [];
+    if ($session !== '') {
+        $where[] = 's.code = :session';
+        $params[':session'] = $session;
+    }
+
+    $sql = 'SELECT ae.student_id AS student_id,
+                   st.first_name AS first_name,
+                   st.last_name AS last_name,
+                   s.code AS session_code,
+                   SUM(CASE WHEN lower(ae.status) = "present" THEN 1 ELSE 0 END) AS present_count,
+                   SUM(CASE WHEN lower(ae.status) = "absent" THEN 1 ELSE 0 END) AS absent_count
+            FROM attendance_entries ae
+            JOIN attendance_sessions ats ON ats.id = ae.session_id
+            JOIN semesters s ON s.id = ats.semester_id
+            JOIN students st ON st.id = ae.student_id';
+    if (count($where) > 0) {
+        $sql .= ' WHERE ' . implode(' AND ', $where);
+    }
+    $sql .= ' GROUP BY ae.student_id, st.first_name, st.last_name, s.code ORDER BY s.code ASC';
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll();
+    foreach ($rows as &$r) {
+        $r['student_name'] = trim(((string)($r['first_name'] ?? '')) . ' ' . ((string)($r['last_name'] ?? '')));
+        unset($r['first_name'], $r['last_name']);
+    }
+    unset($r);
+    return respond(200, ['items' => $rows]);
+}
+
+function attendance_create(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $missing = require_fields($body, ['semester_id', 'class_id', 'session_date', 'entries']);
+    if ($missing) {
+        return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
+    }
+
+    $semesterId = (int)$body['semester_id'];
+    $classId = (int)$body['class_id'];
+    $subjectId = isset($body['subject_id']) && $body['subject_id'] !== '' ? (int)$body['subject_id'] : null;
+
+    $teacherId = null;
+    if (($u['role'] ?? '') === 'prof') {
+        $teacherId = isset($u['teacher_id']) ? (int)$u['teacher_id'] : null;
+        if (!$teacherId) {
+            return respond(403, ['error' => 'forbidden']);
+        }
+        // Prof: must be assigned in timetable to this class (and subject if provided)
+        $where = ['teacher_id = :tid', 'class_id = :cid'];
+        $params = [':tid' => $teacherId, ':cid' => $classId];
+        if ($subjectId !== null) {
+            $where[] = 'subject_id = :sub';
+            $params[':sub'] = $subjectId;
+        }
+        $sql = 'SELECT 1 FROM timetable_entries WHERE ' . implode(' AND ', $where) . ' LIMIT 1';
+        $stmt = db()->prepare($sql);
+        $stmt->execute($params);
+        if (!$stmt->fetch()) {
+            return respond(403, ['error' => 'forbidden']);
+        }
+    } else {
+        $teacherId = isset($body['teacher_id']) && $body['teacher_id'] !== '' ? (int)$body['teacher_id'] : null;
+    }
+
+    $sessionDate = trim((string)$body['session_date']);
+    if ($sessionDate === '') {
+        return respond(422, ['error' => 'validation_error', 'field' => 'session_date']);
+    }
+    $startTime = isset($body['start_time']) ? trim((string)$body['start_time']) : null;
+    $endTime = isset($body['end_time']) ? trim((string)$body['end_time']) : null;
+    $notes = isset($body['notes']) ? trim((string)$body['notes']) : null;
+
+    $entries = $body['entries'];
+    if (!is_array($entries) || count($entries) === 0) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'entries']);
+    }
+
+    $stmt = db()->prepare('INSERT INTO attendance_sessions (semester_id, class_id, subject_id, teacher_id, session_date, start_time, end_time, notes, created_at)
+                           VALUES (:semester_id, :class_id, :subject_id, :teacher_id, :session_date, :start_time, :end_time, :notes, :created_at)');
+    $stmt->execute([
+        ':semester_id' => $semesterId,
+        ':class_id' => $classId,
+        ':subject_id' => $subjectId,
+        ':teacher_id' => $teacherId,
+        ':session_date' => $sessionDate,
+        ':start_time' => $startTime,
+        ':end_time' => $endTime,
+        ':notes' => $notes,
+        ':created_at' => date(DATE_ATOM),
+    ]);
+
+    $sessionId = (int)db()->lastInsertId();
+
+    $stmtE = db()->prepare('INSERT INTO attendance_entries (session_id, student_id, status, remark, created_at)
+                            VALUES (:session_id, :student_id, :status, :remark, :created_at)');
+    foreach ($entries as $e) {
+        if (!is_array($e)) {
+            continue;
+        }
+        $studentId = (int)($e['student_id'] ?? 0);
+        $status = strtolower(trim((string)($e['status'] ?? '')));
+        if ($studentId <= 0 || ($status !== 'present' && $status !== 'absent' && $status !== 'late')) {
+            continue;
+        }
+        $remark = isset($e['remark']) ? trim((string)$e['remark']) : null;
+        $stmtE->execute([
+            ':session_id' => $sessionId,
+            ':student_id' => $studentId,
+            ':status' => $status,
+            ':remark' => $remark,
+            ':created_at' => date(DATE_ATOM),
+        ]);
+    }
+
+    return respond(201, ['id' => $sessionId]);
+}
+
+function attendance_students(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $classId = isset($_GET['class_id']) && $_GET['class_id'] !== '' ? (int)$_GET['class_id'] : 0;
+    $semesterId = isset($_GET['semester_id']) && $_GET['semester_id'] !== '' ? (int)$_GET['semester_id'] : 0;
+    if ($classId <= 0) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'class_id']);
+    }
+
+    if (($u['role'] ?? '') === 'prof') {
+        $teacherId = isset($u['teacher_id']) ? (int)$u['teacher_id'] : 0;
+        if ($teacherId <= 0) {
+            return respond(200, ['items' => []]);
+        }
+        $stmt = db()->prepare('SELECT 1 FROM timetable_entries WHERE teacher_id = :tid AND class_id = :cid LIMIT 1');
+        $stmt->execute([':tid' => $teacherId, ':cid' => $classId]);
+        if (!$stmt->fetch()) {
+            return respond(403, ['error' => 'forbidden']);
+        }
+    }
+
+    // Prefer enrollments if semester_id provided, else fallback to student_class_assignments
+    if ($semesterId > 0) {
+        $stmt = db()->prepare('SELECT st.id, st.matricule, st.first_name, st.last_name
+                               FROM enrollments e
+                               JOIN students st ON st.id = e.student_id
+                               WHERE e.class_id = :class_id AND e.semester_id = :semester_id
+                               ORDER BY st.last_name ASC, st.first_name ASC');
+        $stmt->execute([':class_id' => $classId, ':semester_id' => $semesterId]);
+        return respond(200, ['items' => $stmt->fetchAll()]);
+    }
+
+    $stmt = db()->prepare('SELECT st.id, st.matricule, st.first_name, st.last_name
+                           FROM student_class_assignments sca
+                           JOIN students st ON st.id = sca.student_id
+                           WHERE sca.class_id = :class_id
+                           ORDER BY st.last_name ASC, st.first_name ASC');
+    $stmt->execute([':class_id' => $classId]);
+    return respond(200, ['items' => $stmt->fetchAll()]);
+}
+
+function attendance_sessions_list(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $where = [];
+    $params = [];
+
+    if (($u['role'] ?? '') === 'prof') {
+        $teacherId = isset($u['teacher_id']) ? (int)$u['teacher_id'] : 0;
+        if ($teacherId <= 0) {
+            return respond(200, ['items' => []]);
+        }
+        $where[] = 'teacher_id = :tid';
+        $params[':tid'] = $teacherId;
+    }
+
+    if (isset($_GET['semester_id']) && $_GET['semester_id'] !== '') {
+        $where[] = 'semester_id = :semester_id';
+        $params[':semester_id'] = (int)$_GET['semester_id'];
+    }
+    if (isset($_GET['class_id']) && $_GET['class_id'] !== '') {
+        $where[] = 'class_id = :class_id';
+        $params[':class_id'] = (int)$_GET['class_id'];
+    }
+    if (isset($_GET['from']) && $_GET['from'] !== '') {
+        $where[] = 'session_date >= :from';
+        $params[':from'] = trim((string)$_GET['from']);
+    }
+    if (isset($_GET['to']) && $_GET['to'] !== '') {
+        $where[] = 'session_date <= :to';
+        $params[':to'] = trim((string)$_GET['to']);
+    }
+
+    $sql = 'SELECT id, semester_id, class_id, subject_id, teacher_id, session_date, start_time, end_time, notes, created_at FROM attendance_sessions';
+    if (count($where) > 0) {
+        $sql .= ' WHERE ' . implode(' AND ', $where);
+    }
+    $sql .= ' ORDER BY session_date DESC, id DESC';
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return respond(200, ['items' => $stmt->fetchAll()]);
+}
+
+function attendance_sessions_get(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $stmt = db()->prepare('SELECT id, semester_id, class_id, subject_id, teacher_id, session_date, start_time, end_time, notes, created_at FROM attendance_sessions WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $row = $stmt->fetch();
+    if (!is_array($row)) {
+        return respond(404, ['error' => 'not_found']);
+    }
+
+    if (($u['role'] ?? '') === 'prof') {
+        $teacherId = isset($u['teacher_id']) ? (int)$u['teacher_id'] : 0;
+        if ($teacherId <= 0 || (int)($row['teacher_id'] ?? 0) !== $teacherId) {
+            return respond(403, ['error' => 'forbidden']);
+        }
+    }
+
+    $stmt = db()->prepare('SELECT id, session_id, student_id, status, remark, created_at FROM attendance_entries WHERE session_id = :sid ORDER BY student_id ASC');
+    $stmt->execute([':sid' => $id]);
+    $row['entries'] = $stmt->fetchAll();
+    return respond(200, $row);
+}
+
+function attendance_get(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $stmt = db()->prepare('SELECT id, semester_id, class_id, subject_id, teacher_id, session_date, start_time, end_time, notes, created_at FROM attendance_sessions WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $row = $stmt->fetch();
+    if (!is_array($row)) {
+        return respond(404, ['error' => 'not_found']);
+    }
+
+    $stmt = db()->prepare('SELECT id, session_id, student_id, status, remark, created_at FROM attendance_entries WHERE session_id = :sid ORDER BY student_id ASC');
+    $stmt->execute([':sid' => $id]);
+    $row['entries'] = $stmt->fetchAll();
+
+    return respond(200, $row);
+}
+
+function attendance_update(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $stmt = db()->prepare('UPDATE attendance_sessions SET notes = :notes WHERE id = :id');
+    $stmt->execute([
+        ':notes' => isset($body['notes']) ? trim((string)$body['notes']) : null,
+        ':id' => $id,
+    ]);
+    if ($stmt->rowCount() === 0) {
+        return respond(404, ['error' => 'not_found']);
+    }
+    return respond(200, ['ok' => true]);
+}
+
+function attendance_delete(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $stmt = db()->prepare('DELETE FROM attendance_sessions WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    if ($stmt->rowCount() === 0) {
+        return respond(404, ['error' => 'not_found']);
+    }
+    return respond(200, ['ok' => true]);
+}
+
+function visits_list(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $where = [];
+    $params = [];
+
+    if (($u['role'] ?? '') === 'prof') {
+        $teacherId = isset($u['teacher_id']) ? (int)$u['teacher_id'] : 0;
+        if ($teacherId <= 0) {
+            return respond(200, ['items' => []]);
+        }
+        $where[] = 'teacher_id = :tid';
+        $params[':tid'] = $teacherId;
+    }
+    if (isset($_GET['semester_id']) && $_GET['semester_id'] !== '') {
+        $where[] = 'semester_id = :semester_id';
+        $params[':semester_id'] = (int)$_GET['semester_id'];
+    }
+    if (isset($_GET['class_id']) && $_GET['class_id'] !== '') {
+        $where[] = 'class_id = :class_id';
+        $params[':class_id'] = (int)$_GET['class_id'];
+    }
+    if (isset($_GET['from']) && $_GET['from'] !== '') {
+        $where[] = 'visit_date >= :from';
+        $params[':from'] = trim((string)$_GET['from']);
+    }
+    if (isset($_GET['to']) && $_GET['to'] !== '') {
+        $where[] = 'visit_date <= :to';
+        $params[':to'] = trim((string)$_GET['to']);
+    }
+
+    $sql = 'SELECT id, visit_date, semester_id, class_id, subject_id, teacher_id, title, notes, created_by_user_id, created_at FROM visits';
+    if (count($where) > 0) {
+        $sql .= ' WHERE ' . implode(' AND ', $where);
+    }
+    $sql .= ' ORDER BY visit_date DESC, id DESC';
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return respond(200, ['items' => $stmt->fetchAll()]);
+}
+
+function visits_create(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $missing = require_fields($body, ['visit_date', 'semester_id', 'class_id', 'title']);
+    if ($missing) {
+        return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
+    }
+
+    $stmt = db()->prepare('INSERT INTO visits (visit_date, semester_id, class_id, subject_id, teacher_id, title, notes, created_by_user_id, created_at)
+                           VALUES (:visit_date, :semester_id, :class_id, :subject_id, :teacher_id, :title, :notes, :created_by_user_id, :created_at)');
+
+    $teacherId = null;
+    if (($u['role'] ?? '') === 'prof') {
+        $teacherId = isset($u['teacher_id']) ? (int)$u['teacher_id'] : null;
+    } else {
+        $teacherId = isset($body['teacher_id']) && $body['teacher_id'] !== '' ? (int)$body['teacher_id'] : null;
+    }
+
+    $stmt->execute([
+        ':visit_date' => trim((string)$body['visit_date']),
+        ':semester_id' => (int)$body['semester_id'],
+        ':class_id' => (int)$body['class_id'],
+        ':subject_id' => isset($body['subject_id']) && $body['subject_id'] !== '' ? (int)$body['subject_id'] : null,
+        ':teacher_id' => $teacherId,
+        ':title' => trim((string)$body['title']),
+        ':notes' => isset($body['notes']) ? trim((string)$body['notes']) : null,
+        ':created_by_user_id' => isset($u['id']) ? (int)$u['id'] : null,
+        ':created_at' => date(DATE_ATOM),
+    ]);
+
+    $id = (int)db()->lastInsertId();
+    return respond(201, ['id' => $id]);
+}
+
+function course_progress_init(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $missing = require_fields($body, ['semester_id', 'class_id']);
+    if ($missing) {
+        return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
+    }
+
+    $semesterId = (int)$body['semester_id'];
+    $classId = (int)$body['class_id'];
+
+    $stmt = db()->prepare('SELECT subject_id FROM class_subjects WHERE class_id = :cid ORDER BY subject_id ASC');
+    $stmt->execute([':cid' => $classId]);
+    $subs = $stmt->fetchAll();
+    if (!is_array($subs) || count($subs) === 0) {
+        return respond(200, ['created' => 0]);
+    }
+
+    $created = 0;
+    $stmtIns = db()->prepare('INSERT INTO course_progress (semester_id, class_id, subject_id, matiere_a_finir, en_cours, created_at)
+                              VALUES (:sid, :cid, :sub, NULL, NULL, :created_at)');
+    foreach ($subs as $s) {
+        $subId = isset($s['subject_id']) ? (int)$s['subject_id'] : 0;
+        if ($subId <= 0) {
+            continue;
+        }
+        // check existence
+        $stmtChk = db()->prepare('SELECT 1 FROM course_progress WHERE semester_id = :sid AND class_id = :cid AND subject_id = :sub LIMIT 1');
+        $stmtChk->execute([':sid' => $semesterId, ':cid' => $classId, ':sub' => $subId]);
+        if ($stmtChk->fetch()) {
+            continue;
+        }
+        $stmtIns->execute([
+            ':sid' => $semesterId,
+            ':cid' => $classId,
+            ':sub' => $subId,
+            ':created_at' => date(DATE_ATOM),
+        ]);
+        $created += 1;
+    }
+
+    return respond(200, ['created' => $created]);
+}
+
+function visits_get(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $stmt = db()->prepare('SELECT id, visit_date, semester_id, class_id, subject_id, teacher_id, title, notes, created_by_user_id, created_at FROM visits WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $row = $stmt->fetch();
+    if (!is_array($row)) {
+        return respond(404, ['error' => 'not_found']);
+    }
+    return respond(200, $row);
+}
+
+function visits_update(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $stmt = db()->prepare('UPDATE visits SET title = :title, notes = :notes WHERE id = :id');
+    $stmt->execute([
+        ':title' => isset($body['title']) ? trim((string)$body['title']) : '',
+        ':notes' => isset($body['notes']) ? trim((string)$body['notes']) : null,
+        ':id' => $id,
+    ]);
+    if ($stmt->rowCount() === 0) {
+        return respond(404, ['error' => 'not_found']);
+    }
+    return respond(200, ['ok' => true]);
+}
+
+function visits_delete(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $stmt = db()->prepare('DELETE FROM visits WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    if ($stmt->rowCount() === 0) {
+        return respond(404, ['error' => 'not_found']);
+    }
+    return respond(200, ['ok' => true]);
+}
+
+function course_progress_list(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $where = [];
+    $params = [];
+
+    if (($u['role'] ?? '') === 'prof') {
+        $teacherId = isset($u['teacher_id']) ? (int)$u['teacher_id'] : 0;
+        if ($teacherId <= 0) {
+            return respond(200, ['items' => []]);
+        }
+        $where[] = 'EXISTS (SELECT 1 FROM timetable_entries te WHERE te.teacher_id = :tid AND te.class_id = course_progress.class_id AND te.subject_id = course_progress.subject_id)';
+        $params[':tid'] = $teacherId;
+    }
+    if (isset($_GET['semester_id']) && $_GET['semester_id'] !== '') {
+        $where[] = 'semester_id = :semester_id';
+        $params[':semester_id'] = (int)$_GET['semester_id'];
+    }
+    if (isset($_GET['class_id']) && $_GET['class_id'] !== '') {
+        $where[] = 'class_id = :class_id';
+        $params[':class_id'] = (int)$_GET['class_id'];
+    }
+
+    $sql = 'SELECT id, semester_id, class_id, subject_id, matiere_a_finir, en_cours, created_at FROM course_progress';
+    if (count($where) > 0) {
+        $sql .= ' WHERE ' . implode(' AND ', $where);
+    }
+    $sql .= ' ORDER BY id DESC';
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll();
+
+    // Calcul nb achevées = max(matiere_a_finir - en_cours, 0) si les 2 sont renseignés
+    foreach ($rows as &$r) {
+        $a = isset($r['matiere_a_finir']) ? (int)$r['matiere_a_finir'] : 0;
+        $b = isset($r['en_cours']) ? (int)$r['en_cours'] : 0;
+        $r['nbr_matiere_acheve'] = ($a > 0 && $b >= 0) ? max($a - $b, 0) : null;
+    }
+    unset($r);
+
+    return respond(200, ['items' => $rows]);
+}
+
+function course_progress_upsert(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $missing = require_fields($body, ['semester_id', 'class_id', 'subject_id']);
+    if ($missing) {
+        return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
+    }
+
+    $semesterId = (int)$body['semester_id'];
+    $classId = (int)$body['class_id'];
+    $subjectId = (int)$body['subject_id'];
+
+    $matiereAFinir = array_key_exists('matiere_a_finir', $body) && $body['matiere_a_finir'] !== '' ? (int)$body['matiere_a_finir'] : null;
+    $enCours = array_key_exists('en_cours', $body) && $body['en_cours'] !== '' ? (int)$body['en_cours'] : null;
+
+    // Règles: admin peut modifier matiere_a_finir; prof peut modifier en_cours
+    if (($u['role'] ?? '') === 'prof') {
+        $matiereAFinir = null;
+    }
+    if (($u['role'] ?? '') === 'admin') {
+        // admin peut tout
+    }
+
+    $stmt = db()->prepare('SELECT id, matiere_a_finir, en_cours FROM course_progress WHERE semester_id = :sid AND class_id = :cid AND subject_id = :sub LIMIT 1');
+    $stmt->execute([':sid' => $semesterId, ':cid' => $classId, ':sub' => $subjectId]);
+    $row = $stmt->fetch();
+
+    if (is_array($row) && isset($row['id'])) {
+        $id = (int)$row['id'];
+        $nextAFinir = $matiereAFinir !== null ? $matiereAFinir : ($row['matiere_a_finir'] ?? null);
+        $nextEnCours = $enCours !== null ? $enCours : ($row['en_cours'] ?? null);
+        $stmt = db()->prepare('UPDATE course_progress SET matiere_a_finir = :a, en_cours = :b WHERE id = :id');
+        $stmt->execute([':a' => $nextAFinir, ':b' => $nextEnCours, ':id' => $id]);
+        return respond(200, ['id' => $id]);
+    }
+
+    $stmt = db()->prepare('INSERT INTO course_progress (semester_id, class_id, subject_id, matiere_a_finir, en_cours, created_at)
+                           VALUES (:sid, :cid, :sub, :a, :b, :created_at)');
+    $stmt->execute([
+        ':sid' => $semesterId,
+        ':cid' => $classId,
+        ':sub' => $subjectId,
+        ':a' => $matiereAFinir,
+        ':b' => $enCours,
+        ':created_at' => date(DATE_ATOM),
+    ]);
+    $id = (int)db()->lastInsertId();
+    return respond(201, ['id' => $id]);
+}
+
+function course_progress_get(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $stmt = db()->prepare('SELECT id, semester_id, class_id, subject_id, matiere_a_finir, en_cours, created_at FROM course_progress WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $row = $stmt->fetch();
+    if (!is_array($row)) {
+        return respond(404, ['error' => 'not_found']);
+    }
+    return respond(200, $row);
+}
+
+function course_progress_update(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $stmt = db()->prepare('SELECT id, matiere_a_finir, en_cours FROM course_progress WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $row = $stmt->fetch();
+    if (!is_array($row)) {
+        return respond(404, ['error' => 'not_found']);
+    }
+
+    $nextAFinir = $row['matiere_a_finir'] ?? null;
+    $nextEnCours = $row['en_cours'] ?? null;
+
+    if (($u['role'] ?? '') === 'admin') {
+        if (array_key_exists('matiere_a_finir', $body)) {
+            $nextAFinir = $body['matiere_a_finir'] === '' ? null : (int)$body['matiere_a_finir'];
+        }
+        if (array_key_exists('en_cours', $body)) {
+            $nextEnCours = $body['en_cours'] === '' ? null : (int)$body['en_cours'];
+        }
+    }
+
+    if (($u['role'] ?? '') === 'prof') {
+        if (array_key_exists('en_cours', $body)) {
+            $nextEnCours = $body['en_cours'] === '' ? null : (int)$body['en_cours'];
+        }
+    }
+
+    $stmt = db()->prepare('UPDATE course_progress SET matiere_a_finir = :a, en_cours = :b WHERE id = :id');
+    $stmt->execute([':a' => $nextAFinir, ':b' => $nextEnCours, ':id' => $id]);
+    return respond(200, ['ok' => true]);
+}
+
+function course_progress_delete(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $stmt = db()->prepare('DELETE FROM course_progress WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    if ($stmt->rowCount() === 0) {
+        return respond(404, ['error' => 'not_found']);
+    }
     return respond(200, ['ok' => true]);
 }
 

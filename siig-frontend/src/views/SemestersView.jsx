@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { apiDelete, apiGet, apiPost, apiPut } from '../api.js'
+import { apiDelete, apiGet, apiPost, apiPut } from '../api'
 import DataTable from '../components/DataTable.jsx'
+import GradesView from './GradesView.jsx'
+import AttendanceView from './AttendanceView.jsx'
+import TpByClassView from './TpByClassView.jsx'
+import VisitsByClassView from './VisitsByClassView.jsx'
+import CourseProgressView from './CourseProgressView.jsx'
 
 function levelToSessions(level) {
   const raw = String(level || '').toLowerCase()
@@ -84,6 +89,10 @@ function ProfSemestersDashboard({ Button, Input, Select, onError }) {
     } finally {
       setLoading(false)
     }
+  }
+
+  function goTo(view) {
+    window.location.hash = `#${String(view).replace(':', '/')}`
   }
 
   useEffect(() => {
@@ -532,14 +541,13 @@ function ProfSemestersDashboard({ Button, Input, Select, onError }) {
   )
 }
 
-export default function SemestersView({ role, Button, Input, Select, onError }) {
-  if (role === 'prof') {
-    return <ProfSemestersDashboard Button={Button} Input={Input} Select={Select} onError={onError} />
-  }
-
+export default function SemestersView({ user, role, Button, Input, Select, onError }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
+
+  const [selectedCategory, setSelectedCategory] = useState('')
+  const [selectedLevel, setSelectedLevel] = useState('')
 
   const [code, setCode] = useState('')
   const [title, setTitle] = useState('')
@@ -548,13 +556,59 @@ export default function SemestersView({ role, Button, Input, Select, onError }) 
   const [editCode, setEditCode] = useState('')
   const [editTitle, setEditTitle] = useState('')
 
+  const [embeddedView, setEmbeddedView] = useState('')
+
+  const [subjectsMode, setSubjectsMode] = useState('S1')
+  const [subjectsLoading, setSubjectsLoading] = useState(false)
+  const [semesterMonths, setSemesterMonths] = useState([])
+  const [semesterSubjectPlan, setSemesterSubjectPlan] = useState([])
+
+  const [csLoading, setCsLoading] = useState(false)
+  const [classSubjects, setClassSubjects] = useState([])
+  const [classes, setClasses] = useState([])
+  const [subjects, setSubjects] = useState([])
+
   const canWrite = role === 'admin' || role === 'prof'
+
+  const categories = useMemo(
+    () => [
+      {
+        key: 'professionnel',
+        label: 'Professionnel',
+        levels: ['LicencePro 1', 'LicencePro 2', 'LicencePro 3', 'MasterPro 1', 'MasterPro 2']
+      },
+      {
+        key: 'academique',
+        label: 'Académique',
+        levels: ['Licence 1', 'Licence 2', 'Licence 3', 'Master 1', 'Master 2']
+      },
+      {
+        key: 'luban',
+        label: 'Luban',
+        levels: ['Licence 1', 'Licence 2', 'Licence 3']
+      }
+    ],
+    []
+  )
+
+  const activeCategory = useMemo(() => {
+    if (!selectedCategory) return null
+    return categories.find((c) => c.key === selectedCategory) || null
+  }, [categories, selectedCategory])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return items
-    return items.filter((s) => `${s.code || ''} ${s.title || ''}`.toLowerCase().includes(q))
-  }, [items, query])
+    const cat = selectedCategory.trim().toLowerCase()
+    const lvl = selectedLevel.trim().toLowerCase()
+
+    return items.filter((s) => {
+      const hay = `${s.code || ''} ${s.title || ''}`.toLowerCase()
+      if (q && !hay.includes(q)) return false
+      if (cat && !hay.includes(cat)) return false
+      if (lvl && !hay.includes(lvl)) return false
+      return true
+    })
+  }, [items, query, selectedCategory, selectedLevel])
 
   async function refresh() {
     setLoading(true)
@@ -572,6 +626,97 @@ export default function SemestersView({ role, Button, Input, Select, onError }) 
     refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role])
+
+  useEffect(() => {
+    if (embeddedView !== 'class-subjects') return
+    let canceled = false
+    async function load() {
+      setCsLoading(true)
+      onError?.(null)
+      try {
+        const [links, cls, subs] = await Promise.all([apiGet('/api/class-subjects'), apiGet('/api/classes'), apiGet('/api/subjects')])
+        if (canceled) return
+        setClassSubjects(links.items || [])
+        setClasses(cls.items || [])
+        setSubjects(subs.items || [])
+      } catch (err) {
+        if (!canceled) onError?.(err?.data?.error || 'Erreur')
+      } finally {
+        if (!canceled) setCsLoading(false)
+      }
+    }
+    load()
+    return () => {
+      canceled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embeddedView])
+
+  useEffect(() => {
+    if (embeddedView !== 'semester-subjects') return
+    let canceled = false
+    async function load() {
+      setSubjectsLoading(true)
+      onError?.(null)
+      try {
+        const sem = await apiGet('/api/semesters')
+        const list = sem.items || []
+        const s1 = list.find((x) => String(x.code || '').toUpperCase() === 'S1')
+        const s2 = list.find((x) => String(x.code || '').toUpperCase() === 'S2')
+        const baseSemester = subjectsMode === 'S2' ? s2 : s1
+        if (!baseSemester?.id) {
+          if (!canceled) {
+            setSemesterMonths([])
+            setSemesterSubjectPlan([])
+          }
+          return
+        }
+
+        if (role === 'admin') {
+          await apiPost('/api/semester-months/init', { semester_id: Number(baseSemester.id) })
+        }
+
+        const [months, plan, cls, subs] = await Promise.all([
+          apiGet(`/api/semester-months?semester_id=${encodeURIComponent(baseSemester.id)}`),
+          apiGet(`/api/semester-class-subject-plan?semester_id=${encodeURIComponent(baseSemester.id)}`),
+          apiGet('/api/classes'),
+          apiGet('/api/subjects')
+        ])
+        if (canceled) return
+        setSemesterMonths(months.items || [])
+        setSemesterSubjectPlan(plan.items || [])
+        setClasses(cls.items || [])
+        setSubjects(subs.items || [])
+      } catch (err) {
+        if (!canceled) onError?.(err?.data?.error || 'Erreur')
+      } finally {
+        if (!canceled) setSubjectsLoading(false)
+      }
+    }
+    load()
+    return () => {
+      canceled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embeddedView, subjectsMode, role])
+
+  async function updatePlanSlot({ semesterId, classId, monthIndex, slotIndex, subjectId, tp }) {
+    onError?.(null)
+    try {
+      await apiPost('/api/semester-class-subject-plan', {
+        semester_id: Number(semesterId),
+        class_id: Number(classId),
+        month_index: Number(monthIndex),
+        slot_index: Number(slotIndex),
+        subject_id: subjectId ? Number(subjectId) : null,
+        tp: tp == null ? undefined : tp ? 1 : 0
+      })
+      const plan = await apiGet(`/api/semester-class-subject-plan?semester_id=${encodeURIComponent(semesterId)}`)
+      setSemesterSubjectPlan(plan.items || [])
+    } catch (err) {
+      onError?.(err?.data?.error || 'Erreur')
+    }
+  }
 
   async function onCreate(e) {
     e.preventDefault()
@@ -619,103 +764,370 @@ export default function SemestersView({ role, Button, Input, Select, onError }) 
     }
   }
 
+  function goTo(view) {
+    const next = `#${String(view).replace(':', '/')}`
+    window.location.hash = next
+    try {
+      window.dispatchEvent(new HashChangeEvent('hashchange'))
+    } catch {
+      // ignore
+    }
+  }
+
   return (
     <div className="card">
-      <div className="card__header">Semestres</div>
+      <div className="card__header">
+        <div className="row" style={{ justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+          <div>Semestres</div>
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className={`pill ${selectedCategory === '' ? 'pill--active' : ''}`}
+              onClick={() => {
+                setSelectedCategory('')
+                setSelectedLevel('')
+              }}
+            >
+              Tout
+            </button>
+            {categories.map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                className={`pill ${selectedCategory === c.key ? 'pill--active' : ''}`}
+                onClick={() => {
+                  setSelectedCategory(c.key)
+                  setSelectedLevel('')
+                }}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
       <div className="card__body grid">
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <div className="badge">
             Total: {items.length} • Affichés: {filtered.length} {loading ? '• Chargement…' : ''}
           </div>
-          <div style={{ minWidth: 260, flex: '0 0 auto' }}>
-            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Recherche (code, titre…)" />
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, flex: '1 1 auto' }}>
+            <div style={{ minWidth: 220, flex: '0 0 auto' }}>
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Recherche (code, titre…)" />
+            </div>
+            <div style={{ minWidth: 220, flex: '0 0 auto' }}>
+              <Select
+                value={selectedLevel}
+                onChange={(e) => setSelectedLevel(e.target.value)}
+                disabled={!activeCategory || !(activeCategory.levels || []).length}
+              >
+                <option value="">-- niveau --</option>
+                {(activeCategory?.levels || []).map((lvl) => (
+                  <option key={lvl} value={lvl}>
+                    {lvl}
+                  </option>
+                ))}
+              </Select>
+            </div>
           </div>
         </div>
 
         {canWrite ? (
-          <form onSubmit={onCreate} className="grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-            <div>
-              <div className="label">Code</div>
-              <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="S1" />
+          <div className="grid" style={{ gap: 12 }}>
+            <form onSubmit={onCreate} className="grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+              <div>
+                <div className="label">Code</div>
+                <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="S1" />
+              </div>
+              <div>
+                <div className="label">Titre</div>
+                <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Semestre 1" />
+              </div>
+              <div style={{ alignSelf: 'end' }}>
+                <Button variant="primary" type="submit" style={{ width: '100%' }}>
+                  Ajouter
+                </Button>
+              </div>
+            </form>
+
+            <div className="card" style={{ background: 'rgba(255,255,255,0.03)' }}>
+              <div className="card__header">Gestion</div>
+              <div className="card__body">
+                <div className="row" style={{ flexWrap: 'wrap' }}>
+                  <Button
+                    type="button"
+                    onClick={() => setEmbeddedView('semester-subjects')}
+                    onDoubleClick={() => goTo(`${role}:class-subjects`)}
+                  >
+                    Matières
+                  </Button>
+                  <Button type="button" onClick={() => setEmbeddedView('grades')} onDoubleClick={() => goTo(`${role}:grades`)}>
+                    Note semestrielle
+                  </Button>
+                  <Button type="button" onClick={() => setEmbeddedView('attendance')} onDoubleClick={() => goTo(`${role}:attendance`)}>
+                    Présence
+                  </Button>
+                  <Button type="button" onClick={() => setEmbeddedView('tp-by-class')} onDoubleClick={() => goTo(`${role}:tp-by-class`)}>
+                    TP
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => setEmbeddedView('visits-by-class')}
+                    onDoubleClick={() => goTo(`${role}:visits-by-class`)}
+                  >
+                    Visite
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => setEmbeddedView('course-progress')}
+                    onDoubleClick={() => goTo(`${role}:course-progress`)}
+                  >
+                    Gestion cours
+                  </Button>
+                  <Button type="button" onClick={() => setEmbeddedView('')}>
+                    Fermer
+                  </Button>
+                </div>
+              </div>
             </div>
-            <div>
-              <div className="label">Titre</div>
-              <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Semestre 1" />
-            </div>
-            <div style={{ alignSelf: 'end' }}>
-              <Button variant="primary" type="submit" style={{ width: '100%' }}>
-                Ajouter
-              </Button>
-            </div>
-          </form>
+          </div>
         ) : null}
 
-        <div className="tableWrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Code</th>
-                <th>Titre</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((s) => {
-                const isEditing = canWrite && editingId === s.id
-                return (
-                  <tr key={s.id}>
-                    <td>{s.id}</td>
-                    <td>
-                      {isEditing ? (
-                        <Input value={editCode} onChange={(e) => setEditCode(e.target.value)} />
-                      ) : (
-                        s.code
-                      )}
-                    </td>
-                    <td>
-                      {isEditing ? (
-                        <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
-                      ) : (
-                        s.title
-                      )}
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      {canWrite ? (
-                        isEditing ? (
-                          <div className="row" style={{ justifyContent: 'flex-end' }}>
-                            <Button variant="primary" type="button" onClick={() => saveEdit(s.id)}>
-                              Enregistrer
-                            </Button>
-                            <Button type="button" onClick={cancelEdit}>
-                              Annuler
-                            </Button>
-                          </div>
+        {embeddedView === '' ? (
+          <div className="tableWrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Code</th>
+                  <th>Titre</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((s) => {
+                  const isEditing = canWrite && editingId === s.id
+                  return (
+                    <tr key={s.id}>
+                      <td>{s.id}</td>
+                      <td>
+                        {isEditing ? (
+                          <Input value={editCode} onChange={(e) => setEditCode(e.target.value)} />
                         ) : (
-                          <div className="row" style={{ justifyContent: 'flex-end' }}>
-                            <Button type="button" onClick={() => startEdit(s)}>
-                              Modifier
-                            </Button>
-                            <Button variant="danger" type="button" onClick={() => onDelete(s.id)}>
-                              Supprimer
-                            </Button>
-                          </div>
-                        )
-                      ) : null}
+                          s.code
+                        )}
+                      </td>
+                      <td>
+                        {isEditing ? (
+                          <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
+                        ) : (
+                          s.title
+                        )}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        {canWrite ? (
+                          isEditing ? (
+                            <div className="row" style={{ justifyContent: 'flex-end' }}>
+                              <Button variant="primary" type="button" onClick={() => saveEdit(s.id)}>
+                                Enregistrer
+                              </Button>
+                              <Button type="button" onClick={cancelEdit}>
+                                Annuler
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="row" style={{ justifyContent: 'flex-end' }}>
+                              <Button type="button" onClick={() => startEdit(s)}>
+                                Modifier
+                              </Button>
+                              <Button variant="danger" type="button" onClick={() => onDelete(s.id)}>
+                                Supprimer
+                              </Button>
+                            </div>
+                          )
+                        ) : null}
+                      </td>
+                    </tr>
+                  )
+                })}
+
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="label" style={{ padding: 16 }}>
+                      Aucun semestre.
                     </td>
                   </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div>
+            {embeddedView === 'semester-subjects' ? (
+              (() => {
+                const months = (semesterMonths || [])
+                  .slice()
+                  .sort((a, b) => Number(a.month_index) - Number(b.month_index))
+                  .slice(0, 4)
+
+                const classesSorted = (classes || [])
+                  .slice()
+                  .sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), undefined, { numeric: true, sensitivity: 'base' }))
+
+                const subjectsById = new Map((subjects || []).map((s) => [Number(s.id), s]))
+
+                const semesterId = (() => {
+                  const s1 = (subjectsMode === 'S2' ? 'S2' : 'S1').toUpperCase()
+                  return null
+                })()
+
+                const planByKey = new Map()
+                for (const p of semesterSubjectPlan || []) {
+                  const key = `${p.semester_id}__${p.class_id}__${p.month_index}__${p.slot_index}`
+                  planByKey.set(key, p)
+                }
+
+                const allSemIds = new Set((semesterSubjectPlan || []).map((p) => Number(p.semester_id)))
+                const activeSemesterId = allSemIds.size === 1 ? Array.from(allSemIds)[0] : (semesterSubjectPlan[0] ? Number(semesterSubjectPlan[0].semester_id) : 0)
+
+                const slotCount = subjectsMode === 'Tout' ? 8 : 4
+                const showMonths = subjectsMode === 'Tout' ? [...months, ...months] : months
+                const showSemesterIds = subjectsMode === 'Tout' ? [activeSemesterId, activeSemesterId] : [activeSemesterId]
+
+                return (
+                  <div className="grid" style={{ gap: 12 }}>
+                    <div className="row" style={{ justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                      <div className="badge">{subjectsLoading ? 'Chargement…' : `Classes: ${classesSorted.length}`}</div>
+                      <div className="row" style={{ justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+                        <button type="button" className={`pill ${subjectsMode === 'S1' ? 'pill--active' : ''}`} onClick={() => setSubjectsMode('S1')}>
+                          S1
+                        </button>
+                        <button type="button" className={`pill ${subjectsMode === 'S2' ? 'pill--active' : ''}`} onClick={() => setSubjectsMode('S2')}>
+                          S2
+                        </button>
+                        <button type="button" className={`pill ${subjectsMode === 'Tout' ? 'pill--active' : ''}`} onClick={() => setSubjectsMode('Tout')}>
+                          Tout
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="tableWrap">
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: 70 }}>ID</th>
+                            <th style={{ width: 180 }}>Classe</th>
+                            {Array.from({ length: slotCount }).map((_, slotIdx) => (
+                              <th key={`slot_${slotIdx}`}>{`Mois ${slotIdx + 1}`}</th>
+                            ))}
+                            <th style={{ width: 90 }}>TP</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {subjectsLoading ? (
+                            <tr>
+                              <td colSpan={3 + slotCount} className="label" style={{ padding: 16 }}>
+                                Chargement…
+                              </td>
+                            </tr>
+                          ) : null}
+                          {!subjectsLoading && classesSorted.length === 0 ? (
+                            <tr>
+                              <td colSpan={3 + slotCount} className="label" style={{ padding: 16 }}>
+                                Aucun élément.
+                              </td>
+                            </tr>
+                          ) : null}
+
+                          {!subjectsLoading
+                            ? classesSorted.map((cls) => {
+                                const tpAny = (semesterSubjectPlan || []).some((p) => Number(p.class_id) === Number(cls.id) && Number(p.tp) === 1)
+                                return (
+                                  <tr key={cls.id}>
+                                    <td>{cls.id}</td>
+                                    <td>{`${cls.code || ''} — ${cls.title || ''}`.trim()}</td>
+
+                                    {Array.from({ length: slotCount }).map((_, idx) => {
+                                      const monthIndex = ((idx % 4) + 1)
+                                      const slotIndex = (idx % 4) + 1
+                                      const key = `${activeSemesterId}__${cls.id}__${monthIndex}__${slotIndex}`
+                                      const p = planByKey.get(key)
+                                      const subj = p?.subject_id ? subjectsById.get(Number(p.subject_id)) : null
+                                      return (
+                                        <td key={`${cls.id}_${idx}`} style={{ minWidth: 180 }}>
+                                          <Select
+                                            value={p?.subject_id ? String(p.subject_id) : ''}
+                                            onChange={(e) => {
+                                              void updatePlanSlot({
+                                                semesterId: activeSemesterId,
+                                                classId: cls.id,
+                                                monthIndex,
+                                                slotIndex,
+                                                subjectId: e.target.value ? Number(e.target.value) : null,
+                                                tp: p?.tp ? 1 : 0
+                                              })
+                                            }}
+                                            disabled={!canWrite}
+                                          >
+                                            <option value="">--</option>
+                                            {(subjects || []).map((s) => (
+                                              <option key={s.id} value={String(s.id)}>
+                                                {s.code} — {s.title}
+                                              </option>
+                                            ))}
+                                          </Select>
+                                          <div className="label" style={{ margin: 0, paddingTop: 4 }}>{subj ? subj.code : ''}</div>
+                                        </td>
+                                      )
+                                    })}
+
+                                    <td>
+                                      {role === 'admin' ? (
+                                        <label className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+                                          <input
+                                            type="checkbox"
+                                            checked={tpAny}
+                                            onChange={(e) => {
+                                              void updatePlanSlot({
+                                                semesterId: activeSemesterId,
+                                                classId: cls.id,
+                                                monthIndex: 1,
+                                                slotIndex: 1,
+                                                subjectId: null,
+                                                tp: e.target.checked ? 1 : 0
+                                              })
+                                            }}
+                                          />
+                                        </label>
+                                      ) : (
+                                        <span>{tpAny ? 'Oui' : '-'}</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                )
+                              })
+                            : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 )
-              })}
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="label" style={{ padding: 16 }}>
-                    Aucun semestre.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
+              })()
+            ) : embeddedView === 'grades' ? (
+              <GradesView user={user} role={role} Button={Button} Input={Input} Select={Select} onError={onError} embedded />
+            ) : embeddedView === 'attendance' ? (
+              <AttendanceView user={user} role={role} Button={Button} Input={Input} Select={Select} onError={onError} embedded />
+            ) : embeddedView === 'tp-by-class' ? (
+              <TpByClassView role={role} Button={Button} Input={Input} Select={Select} onError={onError} embedded />
+            ) : embeddedView === 'visits-by-class' ? (
+              <VisitsByClassView user={user} role={role} Button={Button} Input={Input} Select={Select} onError={onError} embedded />
+            ) : embeddedView === 'course-progress' ? (
+              <CourseProgressView role={role} Button={Button} Input={Input} Select={Select} onError={onError} embedded />
+            ) : (
+              <div className="label">Tableau "{embeddedView}": en cours d’activation. (Double clic = page dédiée)</div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
