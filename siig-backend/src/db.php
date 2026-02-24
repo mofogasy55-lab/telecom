@@ -287,6 +287,38 @@ function db_sqlite_sync_columns(PDO $pdo): void
       FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE SET NULL
     )');
 
+    $pdo->exec('CREATE TABLE IF NOT EXISTS semester_class_grade_summary (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      semester_id INTEGER NOT NULL,
+      class_id INTEGER NOT NULL,
+      month_index INTEGER NOT NULL,
+      avg_score REAL NULL,
+      global_comment TEXT NULL,
+      graded_at TEXT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NULL,
+      UNIQUE(semester_id, class_id, month_index),
+      FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+      FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE
+    )');
+
+    $pdo->exec('CREATE TABLE IF NOT EXISTS semester_class_attendance_summary (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      semester_id INTEGER NOT NULL,
+      class_id INTEGER NOT NULL,
+      month_index INTEGER NOT NULL,
+      present_count INTEGER NULL,
+      absent_count INTEGER NULL,
+      late_count INTEGER NULL,
+      total_count INTEGER NULL,
+      global_comment TEXT NULL,
+      updated_at TEXT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(semester_id, class_id, month_index),
+      FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+      FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE
+    )');
+
     $pdo->exec('CREATE TABLE IF NOT EXISTS course_progress (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       semester_id INTEGER NOT NULL,

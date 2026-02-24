@@ -2,6 +2,16 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/timetable.php';
+require_once __DIR__ . '/courses.php';
+require_once __DIR__ . '/assessments.php';
+require_once __DIR__ . '/grades.php';
+require_once __DIR__ . '/messages.php';
+// NOTE: attendance/visits/course_progress handlers are implemented directly in this router.php
+
 function route(string $method, string $path): array
 {
     // Root / API info
@@ -107,6 +117,396 @@ function route(string $method, string $path): array
         ]);
     }
 
+function semester_class_tp_summary_list(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $semesterId = isset($_GET['semester_id']) ? (int)$_GET['semester_id'] : 0;
+    $classId = isset($_GET['class_id']) ? (int)$_GET['class_id'] : 0;
+    $monthIndex = isset($_GET['month_index']) ? (int)$_GET['month_index'] : 0;
+
+    $where = [];
+    $params = [];
+    if ($semesterId > 0) {
+        $where[] = 'semester_id = :semester_id';
+        $params[':semester_id'] = $semesterId;
+    }
+    if ($classId > 0) {
+        $where[] = 'class_id = :class_id';
+        $params[':class_id'] = $classId;
+    }
+    if ($monthIndex > 0) {
+        $where[] = 'month_index = :month_index';
+        $params[':month_index'] = $monthIndex;
+    }
+
+    $sql = 'SELECT id, semester_id, class_id, month_index, tp_count, avg_score, global_comment, created_at, updated_at FROM semester_class_tp_summary';
+    if (count($where) > 0) {
+        $sql .= ' WHERE ' . implode(' AND ', $where);
+    }
+    $sql .= ' ORDER BY semester_id DESC, class_id ASC, month_index ASC';
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return respond(200, ['items' => $stmt->fetchAll()]);
+}
+
+function semester_class_tp_summary_upsert(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $missing = require_fields($body, ['semester_id', 'class_id', 'month_index']);
+    if ($missing) {
+        return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
+    }
+
+    $semesterId = (int)$body['semester_id'];
+    $classId = (int)$body['class_id'];
+    $monthIndex = (int)$body['month_index'];
+    $tpCount = isset($body['tp_count']) ? (int)$body['tp_count'] : 0;
+    $avgScore = array_key_exists('avg_score', $body) ? $body['avg_score'] : null;
+    $globalComment = array_key_exists('global_comment', $body) ? $body['global_comment'] : null;
+
+    if ($tpCount < 0) {
+        $tpCount = 0;
+    }
+
+    $stmt = db()->prepare('SELECT 1 FROM semesters WHERE id = :id');
+    $stmt->execute([':id' => $semesterId]);
+    if (!$stmt->fetch()) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'semester_id']);
+    }
+    $stmt = db()->prepare('SELECT 1 FROM classes WHERE id = :id');
+    $stmt->execute([':id' => $classId]);
+    if (!$stmt->fetch()) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'class_id']);
+    }
+
+    $avgVal = null;
+    if ($avgScore !== null && $avgScore !== '') {
+        $avgVal = (double)$avgScore;
+    }
+    $commentVal = null;
+    if (is_string($globalComment)) {
+        $commentVal = trim($globalComment);
+        if ($commentVal === '') {
+            $commentVal = null;
+        }
+    }
+
+    $pdo = db();
+    $driver = (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+    if ($driver === 'sqlite') {
+        $stmt = $pdo->prepare(
+            'INSERT INTO semester_class_tp_summary (semester_id, class_id, month_index, tp_count, avg_score, global_comment, created_at, updated_at)
+             VALUES (:semester_id, :class_id, :month_index, :tp_count, :avg_score, :global_comment, :created_at, :updated_at)
+             ON CONFLICT(semester_id, class_id, month_index)
+             DO UPDATE SET tp_count = excluded.tp_count, avg_score = excluded.avg_score, global_comment = excluded.global_comment, updated_at = excluded.updated_at'
+        );
+        $stmt->execute([
+            ':semester_id' => $semesterId,
+            ':class_id' => $classId,
+            ':month_index' => $monthIndex,
+            ':tp_count' => $tpCount,
+            ':avg_score' => $avgVal,
+            ':global_comment' => $commentVal,
+            ':created_at' => date(DATE_ATOM),
+            ':updated_at' => date(DATE_ATOM),
+        ]);
+    } else {
+        $stmt = $pdo->prepare(
+            'INSERT INTO semester_class_tp_summary (semester_id, class_id, month_index, tp_count, avg_score, global_comment, created_at, updated_at)
+             VALUES (:semester_id, :class_id, :month_index, :tp_count, :avg_score, :global_comment, :created_at, :updated_at)
+             ON DUPLICATE KEY UPDATE tp_count = VALUES(tp_count), avg_score = VALUES(avg_score), global_comment = VALUES(global_comment), updated_at = VALUES(updated_at)'
+        );
+        $stmt->execute([
+            ':semester_id' => $semesterId,
+            ':class_id' => $classId,
+            ':month_index' => $monthIndex,
+            ':tp_count' => $tpCount,
+            ':avg_score' => $avgVal,
+            ':global_comment' => $commentVal,
+            ':created_at' => date(DATE_ATOM),
+            ':updated_at' => date(DATE_ATOM),
+        ]);
+    }
+
+    return respond(200, ['ok' => true]);
+}
+
+function semester_class_attendance_summary_list(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $where = [];
+    $params = [];
+    if (isset($_GET['semester_id']) && $_GET['semester_id'] !== '') {
+        $where[] = 'semester_id = :sid';
+        $params[':sid'] = (int)$_GET['semester_id'];
+    }
+    if (isset($_GET['class_id']) && $_GET['class_id'] !== '') {
+        $where[] = 'class_id = :cid';
+        $params[':cid'] = (int)$_GET['class_id'];
+    }
+
+    $sql = 'SELECT id, semester_id, class_id, month_index, present_count, absent_count, late_count, total_count, global_comment, updated_at, created_at FROM semester_class_attendance_summary';
+    if (count($where) > 0) {
+        $sql .= ' WHERE ' . implode(' AND ', $where);
+    }
+    $sql .= ' ORDER BY class_id ASC, month_index ASC';
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return respond(200, ['items' => $stmt->fetchAll()]);
+}
+
+function semester_class_attendance_summary_upsert(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $missing = require_fields($body, ['semester_id', 'class_id', 'month_index']);
+    if ($missing) {
+        return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
+    }
+
+    $semesterId = (int)$body['semester_id'];
+    $classId = (int)$body['class_id'];
+    $monthIndex = (int)$body['month_index'];
+    if ($semesterId <= 0 || $classId <= 0 || $monthIndex <= 0) {
+        return respond(422, ['error' => 'validation_error']);
+    }
+
+    $present = array_key_exists('present_count', $body) && $body['present_count'] !== '' && $body['present_count'] !== null ? (int)$body['present_count'] : null;
+    $absent = array_key_exists('absent_count', $body) && $body['absent_count'] !== '' && $body['absent_count'] !== null ? (int)$body['absent_count'] : null;
+    $late = array_key_exists('late_count', $body) && $body['late_count'] !== '' && $body['late_count'] !== null ? (int)$body['late_count'] : null;
+    $total = array_key_exists('total_count', $body) && $body['total_count'] !== '' && $body['total_count'] !== null ? (int)$body['total_count'] : null;
+
+    $globalComment = array_key_exists('global_comment', $body) ? trim((string)$body['global_comment']) : null;
+    if ($globalComment === '') {
+        $globalComment = null;
+    }
+
+    $driver = null;
+    try {
+        $driver = db()->getAttribute(PDO::ATTR_DRIVER_NAME);
+    } catch (Throwable $e) {
+        $driver = null;
+    }
+
+    if ($driver === 'sqlite') {
+        $stmt = db()->prepare('INSERT INTO semester_class_attendance_summary (semester_id, class_id, month_index, present_count, absent_count, late_count, total_count, global_comment, updated_at, created_at)
+                               VALUES (:sid, :cid, :m, :p, :a, :l, :t, :cmt, :updated_at, :created_at)
+                               ON CONFLICT(semester_id, class_id, month_index)
+                               DO UPDATE SET present_count = excluded.present_count, absent_count = excluded.absent_count, late_count = excluded.late_count, total_count = excluded.total_count, global_comment = excluded.global_comment, updated_at = excluded.updated_at');
+        $stmt->execute([
+            ':sid' => $semesterId,
+            ':cid' => $classId,
+            ':m' => $monthIndex,
+            ':p' => $present,
+            ':a' => $absent,
+            ':l' => $late,
+            ':t' => $total,
+            ':cmt' => $globalComment,
+            ':updated_at' => date(DATE_ATOM),
+            ':created_at' => date(DATE_ATOM),
+        ]);
+        return respond(200, ['ok' => true]);
+    }
+
+    $stmt = db()->prepare('INSERT INTO semester_class_attendance_summary (semester_id, class_id, month_index, present_count, absent_count, late_count, total_count, global_comment, updated_at, created_at)
+                           VALUES (:sid, :cid, :m, :p, :a, :l, :t, :cmt, :updated_at, :created_at)
+                           ON DUPLICATE KEY UPDATE present_count = VALUES(present_count), absent_count = VALUES(absent_count), late_count = VALUES(late_count), total_count = VALUES(total_count), global_comment = VALUES(global_comment), updated_at = VALUES(updated_at)');
+    $stmt->execute([
+        ':sid' => $semesterId,
+        ':cid' => $classId,
+        ':m' => $monthIndex,
+        ':p' => $present,
+        ':a' => $absent,
+        ':l' => $late,
+        ':t' => $total,
+        ':cmt' => $globalComment,
+        ':updated_at' => date(DATE_ATOM),
+        ':created_at' => date(DATE_ATOM),
+    ]);
+    return respond(200, ['ok' => true]);
+}
+
+function semester_class_attendance_summary_delete(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $stmt = db()->prepare('DELETE FROM semester_class_attendance_summary WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    if ($stmt->rowCount() === 0) {
+        return respond(404, ['error' => 'not_found']);
+    }
+    return respond(200, ['ok' => true]);
+}
+
+function semester_class_grade_summary_list(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $where = [];
+    $params = [];
+    if (isset($_GET['semester_id']) && $_GET['semester_id'] !== '') {
+        $where[] = 'semester_id = :sid';
+        $params[':sid'] = (int)$_GET['semester_id'];
+    }
+    if (isset($_GET['class_id']) && $_GET['class_id'] !== '') {
+        $where[] = 'class_id = :cid';
+        $params[':cid'] = (int)$_GET['class_id'];
+    }
+
+    $sql = 'SELECT id, semester_id, class_id, month_index, avg_score, global_comment, graded_at, created_at, updated_at FROM semester_class_grade_summary';
+    if (count($where) > 0) {
+        $sql .= ' WHERE ' . implode(' AND ', $where);
+    }
+    $sql .= ' ORDER BY class_id ASC, month_index ASC';
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return respond(200, ['items' => $stmt->fetchAll()]);
+}
+
+function semester_class_grade_summary_upsert(): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin', 'prof']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $body = json_input();
+    $missing = require_fields($body, ['semester_id', 'class_id', 'month_index']);
+    if ($missing) {
+        return respond(422, ['error' => 'validation_error', 'missing' => $missing]);
+    }
+
+    $semesterId = (int)$body['semester_id'];
+    $classId = (int)$body['class_id'];
+    $monthIndex = (int)$body['month_index'];
+    if ($semesterId <= 0 || $classId <= 0 || $monthIndex <= 0) {
+        return respond(422, ['error' => 'validation_error']);
+    }
+
+    $avgScore = array_key_exists('avg_score', $body) && $body['avg_score'] !== '' && $body['avg_score'] !== null ? (float)$body['avg_score'] : null;
+    $globalComment = array_key_exists('global_comment', $body) ? trim((string)$body['global_comment']) : null;
+    if ($globalComment === '') {
+        $globalComment = null;
+    }
+    $gradedAt = array_key_exists('graded_at', $body) ? trim((string)$body['graded_at']) : null;
+    if ($gradedAt === '') {
+        $gradedAt = null;
+    }
+
+    $driver = null;
+    try {
+        $driver = db()->getAttribute(PDO::ATTR_DRIVER_NAME);
+    } catch (Throwable $e) {
+        $driver = null;
+    }
+
+    if ($driver === 'sqlite') {
+        $stmt = db()->prepare('INSERT INTO semester_class_grade_summary (semester_id, class_id, month_index, avg_score, global_comment, graded_at, created_at, updated_at)
+                               VALUES (:sid, :cid, :m, :avg, :cmt, :ga, :created_at, :updated_at)
+                               ON CONFLICT(semester_id, class_id, month_index)
+                               DO UPDATE SET avg_score = excluded.avg_score, global_comment = excluded.global_comment, graded_at = excluded.graded_at, updated_at = excluded.updated_at');
+        $stmt->execute([
+            ':sid' => $semesterId,
+            ':cid' => $classId,
+            ':m' => $monthIndex,
+            ':avg' => $avgScore,
+            ':cmt' => $globalComment,
+            ':ga' => $gradedAt,
+            ':created_at' => date(DATE_ATOM),
+            ':updated_at' => date(DATE_ATOM),
+        ]);
+        return respond(200, ['ok' => true]);
+    }
+
+    $stmt = db()->prepare('INSERT INTO semester_class_grade_summary (semester_id, class_id, month_index, avg_score, global_comment, graded_at, created_at, updated_at)
+                           VALUES (:sid, :cid, :m, :avg, :cmt, :ga, :created_at, :updated_at)
+                           ON DUPLICATE KEY UPDATE avg_score = VALUES(avg_score), global_comment = VALUES(global_comment), graded_at = VALUES(graded_at), updated_at = VALUES(updated_at)');
+    $stmt->execute([
+        ':sid' => $semesterId,
+        ':cid' => $classId,
+        ':m' => $monthIndex,
+        ':avg' => $avgScore,
+        ':cmt' => $globalComment,
+        ':ga' => $gradedAt,
+        ':created_at' => date(DATE_ATOM),
+        ':updated_at' => date(DATE_ATOM),
+    ]);
+    return respond(200, ['ok' => true]);
+}
+
+function semester_class_grade_summary_delete(int $id): array
+{
+    $u = auth_user();
+    if ($u === null) {
+        return respond(401, ['error' => 'unauthorized']);
+    }
+    $forbidden = require_role($u, ['admin']);
+    if ($forbidden) {
+        return $forbidden;
+    }
+
+    $stmt = db()->prepare('DELETE FROM semester_class_grade_summary WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    if ($stmt->rowCount() === 0) {
+        return respond(404, ['error' => 'not_found']);
+    }
+    return respond(200, ['ok' => true]);
+}
+
     // Semester monthly plan (subjects by class / month)
     if ($path === '/api/semester-months' && $method === 'GET') {
         return semester_months_list();
@@ -144,6 +544,29 @@ function route(string $method, string $path): array
             return respond(401, ['error' => 'unauthorized']);
         }
         return respond(200, $u);
+    }
+
+    // Messages / Inbox
+    if ($path === '/api/messages' && $method === 'POST') {
+        return messages_create();
+    }
+    if ($path === '/api/messages/inbox' && $method === 'GET') {
+        return messages_inbox();
+    }
+    if ($path === '/api/messages/unread-count' && $method === 'GET') {
+        return messages_unread_count();
+    }
+    if (preg_match('#^/api/messages/(\d+)/approve$#', $path, $m) === 1) {
+        $id = (int)$m[1];
+        if ($method === 'POST') {
+            return messages_approve($id);
+        }
+    }
+    if (preg_match('#^/api/messages/(\d+)/read$#', $path, $m) === 1) {
+        $id = (int)$m[1];
+        if ($method === 'POST') {
+            return messages_mark_read($id);
+        }
     }
 
     // Students (example module)
@@ -450,6 +873,53 @@ function route(string $method, string $path): array
         if ($method === 'DELETE') {
             return grades_delete($id);
         }
+    }
+
+    // Semester class grade summary
+    if ($path === '/api/semester-class-grade-summary' && $method === 'GET') {
+        return semester_class_grade_summary_list();
+    }
+    if ($path === '/api/semester-class-grade-summary' && $method === 'POST') {
+        return semester_class_grade_summary_upsert();
+    }
+    if (preg_match('#^/api/semester-class-grade-summary/(\d+)$#', $path, $m) === 1) {
+        $id = (int)$m[1];
+        if ($method === 'DELETE') {
+            return semester_class_grade_summary_delete($id);
+        }
+    }
+
+    // Semester class attendance summary
+    if ($path === '/api/semester-class-attendance-summary' && $method === 'GET') {
+        return semester_class_attendance_summary_list();
+    }
+    if ($path === '/api/semester-class-attendance-summary' && $method === 'POST') {
+        return semester_class_attendance_summary_upsert();
+    }
+    if (preg_match('#^/api/semester-class-attendance-summary/(\d+)$#', $path, $m) === 1) {
+        $id = (int)$m[1];
+        if ($method === 'DELETE') {
+            return semester_class_attendance_summary_delete($id);
+        }
+    }
+
+    // Semester class TP summary
+    if ($path === '/api/semester-class-tp-summary' && $method === 'GET') {
+        return semester_class_tp_summary_list();
+    }
+    if ($path === '/api/semester-class-tp-summary' && $method === 'POST') {
+        return semester_class_tp_summary_upsert();
+    }
+
+    // Semester monthly plan (subjects by class / month)
+    if ($path === '/api/semester-months' && $method === 'GET') {
+        return semester_months_list();
+    }
+    if ($path === '/api/attendance' && $method === 'POST') {
+        return attendance_create();
+    }
+    if ($path === '/api/attendance/students' && $method === 'GET') {
+        return attendance_students();
     }
 
     // Attendance
@@ -1155,11 +1625,6 @@ function attendance_create(): array
     $endTime = isset($body['end_time']) ? trim((string)$body['end_time']) : null;
     $notes = isset($body['notes']) ? trim((string)$body['notes']) : null;
 
-    $entries = $body['entries'];
-    if (!is_array($entries) || count($entries) === 0) {
-        return respond(422, ['error' => 'validation_error', 'field' => 'entries']);
-    }
-
     $stmt = db()->prepare('INSERT INTO attendance_sessions (semester_id, class_id, subject_id, teacher_id, session_date, start_time, end_time, notes, created_at)
                            VALUES (:semester_id, :class_id, :subject_id, :teacher_id, :session_date, :start_time, :end_time, :notes, :created_at)');
     $stmt->execute([
@@ -1178,6 +1643,10 @@ function attendance_create(): array
 
     $stmtE = db()->prepare('INSERT INTO attendance_entries (session_id, student_id, status, remark, created_at)
                             VALUES (:session_id, :student_id, :status, :remark, :created_at)');
+    $entries = $body['entries'];
+    if (!is_array($entries) || count($entries) === 0) {
+        return respond(422, ['error' => 'validation_error', 'field' => 'entries']);
+    }
     foreach ($entries as $e) {
         if (!is_array($e)) {
             continue;

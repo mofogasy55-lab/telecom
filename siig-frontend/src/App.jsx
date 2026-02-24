@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { login, logout, me, register } from './auth.js'
+import { apiGet } from './api.js'
 import Sidebar from './components/Sidebar.jsx'
 import { findNavItemByView, getNavItemsForRole } from './modules.js'
 import HomeView from './views/HomeView.jsx'
@@ -22,6 +23,7 @@ import AttendanceView from './views/AttendanceView.jsx'
 import TpByClassView from './views/TpByClassView.jsx'
 import VisitsByClassView from './views/VisitsByClassView.jsx'
 import CourseProgressView from './views/CourseProgressView.jsx'
+import InboxView from './views/InboxView.jsx'
 
 function roleLabel(role) {
   if (role === 'admin') return 'Admin'
@@ -50,6 +52,7 @@ function hashToView(hash) {
 function isViewAllowedForRole(view, role) {
   if (!view || !role) return false
   if (view === 'home') return true
+  if (view === 'inbox') return true
   if (view.startsWith('admin:')) return role === 'admin'
   if (view.startsWith('prof:')) return role === 'prof'
   if (view.startsWith('etudiant:')) return role === 'etudiant'
@@ -71,11 +74,67 @@ function Select(props) {
   return <select {...props} className={`input ${props.className || ''}`.trim()} />
 }
 
+function StatBars({ data, max = 20, height = 220 }) {
+  const plotHeight = 150
+  const top = 14
+  const left = 44
+  const bottom = 40
+  const barWidth = 34
+  const gap = 22
+  const width = Math.max(560, left + 14 + data.length * (barWidth + gap))
+  const zeroY = top + plotHeight
+
+  function yForValue(v) {
+    const clamped = Math.max(0, Math.min(max, Number(v) || 0))
+    return top + plotHeight - (clamped / max) * plotHeight
+  }
+
+  const ticks = [0, 5, 10, 15, 20]
+
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="statChart">
+      {ticks.map((t) => {
+        const y = yForValue(t)
+        return (
+          <g key={t}>
+            <line x1={left} y1={y} x2={width - 10} y2={y} className="statChart__grid" />
+            <text x={left - 10} y={y + 4} textAnchor="end" className="statChart__tick">
+              {t}
+            </text>
+          </g>
+        )
+      })}
+
+      <line x1={left} y1={top} x2={left} y2={zeroY} className="statChart__axis" />
+      <line x1={left} y1={zeroY} x2={width - 10} y2={zeroY} className="statChart__axis" />
+
+      {data.map((d, i) => {
+        const x = left + 14 + i * (barWidth + gap)
+        const y = yForValue(d.value)
+        const h = zeroY - y
+        return (
+          <g key={String(d.label)}>
+            <rect x={x} y={y} width={barWidth} height={h} rx={8} className="statChart__bar" />
+            <text x={x + barWidth / 2} y={zeroY + 18} textAnchor="middle" className="statChart__label">
+              {d.label}
+            </text>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
 export default function App() {
   const [user, setUser] = useState(null)
   const [mode, setMode] = useState('login')
   const [error, setError] = useState(null)
   const [view, setView] = useState('auth')
+
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  const [dashboardData, setDashboardData] = useState(null)
+  const [dashboardLoading, setDashboardLoading] = useState(false)
 
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === '1')
@@ -85,6 +144,96 @@ export default function App() {
   const [selectedRole, setSelectedRole] = useState('admin')
 
   const isAuthed = useMemo(() => !!localStorage.getItem('token'), [])
+
+  const navItems = useMemo(() => {
+    if (!user) return []
+    return getNavItemsForRole(user.role)
+  }, [user])
+
+  const pageTitle = useMemo(() => {
+    if (view === 'auth') return mode === 'register' ? 'Inscription' : 'Connexion'
+    const item = findNavItemByView(navItems, view)
+    return item ? item.label : 'SIIG'
+  }, [view, mode, navItems])
+
+  const isDashboardView = useMemo(
+    () => view === 'admin:dashboard' || view === 'prof:dashboard' || view === 'etudiant:dashboard',
+    [view]
+  )
+
+  useEffect(() => {
+    if (!isDashboardView || !user) return
+
+    let cancelled = false
+
+    async function load() {
+      setDashboardLoading(true)
+      try {
+        const desiredOrder = ['L1', 'LP1', 'LUB1', 'L2', 'LP2', 'LUB2', 'L3', 'LP3', 'LUB3', 'M1', 'MP1', 'MP2']
+        const semesterId = 1
+        const monthIndex = 4
+
+        const classesRes = await apiGet('/api/classes')
+        const classItems = Array.isArray(classesRes?.items) ? classesRes.items : []
+        const classes = desiredOrder
+          .map((code) => classItems.find((c) => String(c.code).toUpperCase() === code))
+          .filter(Boolean)
+
+        const byClassId = (items, field) => {
+          const m = new Map()
+          for (const it of items || []) {
+            if (it && it.class_id != null) m.set(Number(it.class_id), it[field])
+          }
+          return m
+        }
+
+        const gradeRes = await apiGet(`/api/semester-class-grade-summary?semester_id=${semesterId}&month_index=${monthIndex}`)
+        const attRes = await apiGet(`/api/semester-class-attendance-summary?semester_id=${semesterId}&month_index=${monthIndex}`)
+        const tpRes = await apiGet(`/api/semester-class-tp-summary?semester_id=${semesterId}&month_index=${monthIndex}`)
+        const courseRes = await apiGet(`/api/course-progress?semester_id=${semesterId}`)
+
+        const gradeAvg = byClassId(Array.isArray(gradeRes?.items) ? gradeRes.items : [], 'avg_score')
+        const tpAvg = byClassId(Array.isArray(tpRes?.items) ? tpRes.items : [], 'avg_score')
+
+        const attendanceMap = new Map()
+        for (const it of Array.isArray(attRes?.items) ? attRes.items : []) {
+          const cid = Number(it.class_id)
+          const present = Number(it.present_count) || 0
+          const total = Number(it.total_count) || 0
+          const ratio = total > 0 ? present / total : 0
+          attendanceMap.set(cid, ratio * 20)
+        }
+
+        const courseMap = new Map()
+        for (const it of Array.isArray(courseRes?.items) ? courseRes.items : []) {
+          const cid = Number(it.class_id)
+          const remaining = Number(it.matiere_a_finir) || 0
+          const inProgress = Number(it.en_cours) || 0
+          const denom = remaining + inProgress
+          const ratio = denom > 0 ? inProgress / denom : 0
+          courseMap.set(cid, ratio * 20)
+        }
+
+        const noteData = classes.map((c) => ({ label: String(c.code).toUpperCase(), value: Number(gradeAvg.get(Number(c.id)) || 0) }))
+        const presenceData = classes.map((c) => ({ label: String(c.code).toUpperCase(), value: Number(attendanceMap.get(Number(c.id)) || 0) }))
+        const tpData = classes.map((c) => ({ label: String(c.code).toUpperCase(), value: Number(tpAvg.get(Number(c.id)) || 0) }))
+        const coursData = classes.map((c) => ({ label: String(c.code).toUpperCase(), value: Number(courseMap.get(Number(c.id)) || 0) }))
+
+        if (!cancelled) {
+          setDashboardData({ noteData, presenceData, tpData, coursData })
+        }
+      } catch (e) {
+        if (!cancelled) setError(e)
+      } finally {
+        if (!cancelled) setDashboardLoading(false)
+      }
+    }
+
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [isDashboardView, user])
 
   const currentNavItem = useMemo(() => {
     if (!user) return null
@@ -150,6 +299,29 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [user])
 
+  useEffect(() => {
+    if (!user) return
+
+    let cancelled = false
+
+    async function loadUnread() {
+      try {
+        const res = await apiGet('/api/messages/unread-count')
+        const n = Number(res?.count || 0) || 0
+        if (!cancelled) setUnreadCount(n)
+      } catch {
+        if (!cancelled) setUnreadCount(0)
+      }
+    }
+
+    loadUnread()
+    const t = window.setInterval(loadUnread, 12000)
+    return () => {
+      cancelled = true
+      window.clearInterval(t)
+    }
+  }, [user])
+
   async function onSubmitAuth(e) {
     e.preventDefault()
     setError(null)
@@ -170,11 +342,10 @@ export default function App() {
     logout()
     setUser(null)
     setView('auth')
+    setUnreadCount(0)
     window.location.hash = ''
     setDrawerOpen(false)
   }
-
-  const pageTitle = user ? `Espace ${roleLabel(user.role)}` : 'Connexion'
 
   if (!user) {
     return (
@@ -292,6 +463,15 @@ export default function App() {
 
           <div className="row">
             <span className="badge">{user.email} • {roleLabel(user.role)}</span>
+            <button
+              type="button"
+              className="mailBtn"
+              onClick={() => navigate('inbox')}
+              title="Boîte à lettres"
+            >
+              <span className="mailBtn__icon" aria-hidden="true">✉</span>
+              {unreadCount > 0 ? <span className="mailBtn__dot" aria-label="Nouveaux messages" /> : null}
+            </button>
             <Button variant="primary" onClick={onLogout}>
               Déconnexion
             </Button>
@@ -322,21 +502,34 @@ export default function App() {
 
           {view === 'home' && <HomeView user={user} roleLabel={roleLabel} actions={homeActions} onNavigate={navigate} Button={Button} />}
 
-          {(view === 'admin:dashboard' || view === 'prof:dashboard' || view === 'etudiant:dashboard') && (
-            <div className="card">
-              <div className="card__header">Dashboard</div>
-              <div className="card__body">
-                <div className="grid">
-                  <div className="badge">Rôle: {roleLabel(user.role)}</div>
-                  <div className="label">
-                    Ce dashboard est la base pour implémenter progressivement le cahier des charges (inscriptions, matières,
-                    emplois du temps, cours, notes, examens, tableaux de bord, notifications, etc.).
-                  </div>
-                  <div className="label">
-                    Ajout “dynamique” : chaque module devient un item de menu + endpoints API (même pattern que “Étudiants”).
-                  </div>
-                </div>
-              </div>
+          {view === 'inbox' && (
+            <InboxView user={user} role={user.role} Button={Button} Input={Input} Select={Select} onError={setError} />
+          )}
+
+          {isDashboardView && (
+            <div className="dashboardStack">
+              {dashboardLoading ? <div className="label">Chargement des statistiques…</div> : null}
+              {!dashboardLoading && dashboardData
+                ? [
+                    { title: 'Note (moyenne par classe)', data: dashboardData.noteData },
+                    { title: 'Présence (moyenne par classe)', data: dashboardData.presenceData },
+                    { title: 'TP (moyenne par classe)', data: dashboardData.tpData },
+                    { title: 'Cours en ligne (moyenne par classe)', data: dashboardData.coursData }
+                  ].map((c) => (
+                    <div key={c.title} className="card card--white statCard">
+                      <div className="card__header">{c.title}</div>
+                      <div className="card__body">
+                        <div className="statMeta">
+                          <div className="badge">Rôle: {roleLabel(user.role)}</div>
+                          <div className="statMeta__hint">Axe vertical: 0 à 20 (moyenne) • Axe horizontal: classes</div>
+                        </div>
+                        <div className="statChartScroll">
+                          <StatBars data={c.data} />
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                : null}
             </div>
           )}
 
@@ -346,6 +539,10 @@ export default function App() {
 
           {(view === 'admin:semesters' || view === 'prof:semesters') && (
             <SemestersView user={user} role={user.role} Button={Button} Input={Input} Select={Select} onError={setError} />
+          )}
+
+          {(view === 'admin:semester-subject-plan' || view === 'prof:semester-subject-plan') && (
+            <SemestersView user={user} role={user.role} Button={Button} Input={Input} Select={Select} onError={setError} initialEmbeddedView="semester-subjects" />
           )}
 
           {(view === 'admin:classes' || view === 'prof:classes') && <ClassesView role={user.role} Button={Button} Input={Input} onError={setError} />}

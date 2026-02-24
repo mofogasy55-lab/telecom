@@ -6,6 +6,20 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS messages (
+  id SERIAL PRIMARY KEY,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  from_user_id INT NULL,
+  to_teacher_id INT NULL,
+  subject TEXT NULL,
+  body TEXT NOT NULL,
+  is_read INT NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  approved_at TEXT NULL,
+  approved_by_user_id INT NULL
+);
+
 CREATE TABLE IF NOT EXISTS students (
   id SERIAL PRIMARY KEY,
   matricule TEXT NOT NULL UNIQUE,

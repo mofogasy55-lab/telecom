@@ -541,7 +541,7 @@ function ProfSemestersDashboard({ Button, Input, Select, onError }) {
   )
 }
 
-export default function SemestersView({ user, role, Button, Input, Select, onError }) {
+export default function SemestersView({ user, role, Button, Input, Select, onError, initialEmbeddedView = '' }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
@@ -556,17 +556,31 @@ export default function SemestersView({ user, role, Button, Input, Select, onErr
   const [editCode, setEditCode] = useState('')
   const [editTitle, setEditTitle] = useState('')
 
-  const [embeddedView, setEmbeddedView] = useState('')
+  const [embeddedView, setEmbeddedView] = useState(initialEmbeddedView || '')
 
   const [subjectsMode, setSubjectsMode] = useState('S1')
   const [subjectsLoading, setSubjectsLoading] = useState(false)
   const [semesterMonths, setSemesterMonths] = useState([])
   const [semesterSubjectPlan, setSemesterSubjectPlan] = useState([])
 
+  const [editingPlanCell, setEditingPlanCell] = useState(null)
+
   const [csLoading, setCsLoading] = useState(false)
   const [classSubjects, setClassSubjects] = useState([])
   const [classes, setClasses] = useState([])
   const [subjects, setSubjects] = useState([])
+
+  const [gradeSummaryLoading, setGradeSummaryLoading] = useState(false)
+  const [gradeSummary, setGradeSummary] = useState([])
+  const [editingGradeCell, setEditingGradeCell] = useState(null)
+
+  const [attSummaryLoading, setAttSummaryLoading] = useState(false)
+  const [attSummary, setAttSummary] = useState([])
+  const [editingAttCell, setEditingAttCell] = useState(null)
+
+  const [tpSummaryLoading, setTpSummaryLoading] = useState(false)
+  const [tpSummary, setTpSummary] = useState([])
+  const [editingTpCell, setEditingTpCell] = useState(null)
 
   const canWrite = role === 'admin' || role === 'prof'
 
@@ -700,9 +714,192 @@ export default function SemestersView({ user, role, Button, Input, Select, onErr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [embeddedView, subjectsMode, role])
 
+  useEffect(() => {
+    if (embeddedView !== 'semester-grades') return
+    let canceled = false
+    async function load() {
+      setGradeSummaryLoading(true)
+      onError?.(null)
+      try {
+        const sem = await apiGet('/api/semesters')
+        const list = sem.items || []
+        const s1 = list.find((x) => String(x.code || '').toUpperCase() === 'S1')
+        const s2 = list.find((x) => String(x.code || '').toUpperCase() === 'S2')
+
+        const baseSemester = subjectsMode === 'S2' ? s2 : s1
+        const baseSemesterId = baseSemester?.id ? Number(baseSemester.id) : 0
+
+        if (!baseSemesterId) {
+          if (!canceled) setGradeSummary([])
+          return
+        }
+
+        const [rows, cls] = await Promise.all([
+          apiGet(`/api/semester-class-grade-summary?semester_id=${encodeURIComponent(baseSemesterId)}`),
+          apiGet('/api/classes')
+        ])
+        if (canceled) return
+        setGradeSummary(rows.items || [])
+        setClasses(cls.items || [])
+      } catch (err) {
+        if (!canceled) onError?.(err?.data?.error || 'Erreur')
+      } finally {
+        if (!canceled) setGradeSummaryLoading(false)
+      }
+    }
+    load()
+    return () => {
+      canceled = true
+    }
+  }, [embeddedView, subjectsMode, onError])
+
+  useEffect(() => {
+    if (embeddedView !== 'semester-tp') return
+    let canceled = false
+    async function load() {
+      setTpSummaryLoading(true)
+      onError?.(null)
+      try {
+        const sem = await apiGet('/api/semesters')
+        const list = sem.items || []
+        const s1 = list.find((x) => String(x.code || '').toUpperCase() === 'S1')
+        const s2 = list.find((x) => String(x.code || '').toUpperCase() === 'S2')
+        const baseSemester = subjectsMode === 'S2' ? s2 : s1
+        const baseSemesterId = baseSemester?.id ? Number(baseSemester.id) : 0
+        if (!baseSemesterId) {
+          if (!canceled) setTpSummary([])
+          return
+        }
+        const [rows, cls] = await Promise.all([
+          apiGet(`/api/semester-class-tp-summary?semester_id=${encodeURIComponent(baseSemesterId)}`),
+          apiGet('/api/classes')
+        ])
+        if (canceled) return
+        setTpSummary(rows.items || [])
+        setClasses(cls.items || [])
+      } catch (err) {
+        if (!canceled) onError?.(err?.data?.error || 'Erreur')
+      } finally {
+        if (!canceled) setTpSummaryLoading(false)
+      }
+    }
+    load()
+    return () => {
+      canceled = true
+    }
+  }, [embeddedView, subjectsMode, onError])
+
+  useEffect(() => {
+    if (embeddedView !== 'semester-attendance') return
+    let canceled = false
+    async function load() {
+      setAttSummaryLoading(true)
+      onError?.(null)
+      try {
+        const sem = await apiGet('/api/semesters')
+        const list = sem.items || []
+        const s1 = list.find((x) => String(x.code || '').toUpperCase() === 'S1')
+        const s2 = list.find((x) => String(x.code || '').toUpperCase() === 'S2')
+        const baseSemester = subjectsMode === 'S2' ? s2 : s1
+        const baseSemesterId = baseSemester?.id ? Number(baseSemester.id) : 0
+        if (!baseSemesterId) {
+          if (!canceled) setAttSummary([])
+          return
+        }
+        const [rows, cls] = await Promise.all([
+          apiGet(`/api/semester-class-attendance-summary?semester_id=${encodeURIComponent(baseSemesterId)}`),
+          apiGet('/api/classes')
+        ])
+        if (canceled) return
+        setAttSummary(rows.items || [])
+        setClasses(cls.items || [])
+      } catch (err) {
+        if (!canceled) onError?.(err?.data?.error || 'Erreur')
+      } finally {
+        if (!canceled) setAttSummaryLoading(false)
+      }
+    }
+    load()
+    return () => {
+      canceled = true
+    }
+  }, [embeddedView, subjectsMode, onError])
+
+  async function upsertAttendanceSummary({ semesterId, classId, monthIndex, presentCount, absentCount, lateCount, totalCount, globalComment }) {
+    onError?.(null)
+    try {
+      if (!semesterId) {
+        onError?.('Semestre introuvable (connexion requise ou données manquantes).')
+        return
+      }
+      await apiPost('/api/semester-class-attendance-summary', {
+        semester_id: Number(semesterId),
+        class_id: Number(classId),
+        month_index: Number(monthIndex),
+        present_count: presentCount,
+        absent_count: absentCount,
+        late_count: lateCount,
+        total_count: totalCount,
+        global_comment: globalComment
+      })
+      const rows = await apiGet(`/api/semester-class-attendance-summary?semester_id=${encodeURIComponent(semesterId)}`)
+      setAttSummary(rows.items || [])
+    } catch (err) {
+      onError?.(err?.data?.error || 'Erreur')
+    }
+  }
+
+  async function upsertTpSummary({ semesterId, classId, monthIndex, tpCount, avgScore, globalComment }) {
+    onError?.(null)
+    try {
+      if (!semesterId) {
+        onError?.('Semestre introuvable (connexion requise ou données manquantes).')
+        return
+      }
+      await apiPost('/api/semester-class-tp-summary', {
+        semester_id: Number(semesterId),
+        class_id: Number(classId),
+        month_index: Number(monthIndex),
+        tp_count: tpCount,
+        avg_score: avgScore,
+        global_comment: globalComment
+      })
+      const rows = await apiGet(`/api/semester-class-tp-summary?semester_id=${encodeURIComponent(semesterId)}`)
+      setTpSummary(rows.items || [])
+    } catch (err) {
+      onError?.(err?.data?.error || 'Erreur')
+    }
+  }
+
+  async function upsertGradeSummary({ semesterId, classId, monthIndex, avgScore, globalComment, gradedAt }) {
+    onError?.(null)
+    try {
+      if (!semesterId) {
+        onError?.('Semestre introuvable (connexion requise ou données manquantes).')
+        return
+      }
+      await apiPost('/api/semester-class-grade-summary', {
+        semester_id: Number(semesterId),
+        class_id: Number(classId),
+        month_index: Number(monthIndex),
+        avg_score: avgScore,
+        global_comment: globalComment,
+        graded_at: gradedAt
+      })
+      const rows = await apiGet(`/api/semester-class-grade-summary?semester_id=${encodeURIComponent(semesterId)}`)
+      setGradeSummary(rows.items || [])
+    } catch (err) {
+      onError?.(err?.data?.error || 'Erreur')
+    }
+  }
+
   async function updatePlanSlot({ semesterId, classId, monthIndex, slotIndex, subjectId, tp }) {
     onError?.(null)
     try {
+      if (!semesterId) {
+        onError?.('Semestre introuvable (connexion requise ou données manquantes).')
+        return
+      }
       await apiPost('/api/semester-class-subject-plan', {
         semester_id: Number(semesterId),
         class_id: Number(classId),
@@ -857,17 +1054,17 @@ export default function SemestersView({ user, role, Button, Input, Select, onErr
                   <Button
                     type="button"
                     onClick={() => setEmbeddedView('semester-subjects')}
-                    onDoubleClick={() => goTo(`${role}:class-subjects`)}
+                    onDoubleClick={() => goTo(`${role}:semester-subject-plan`)}
                   >
                     Matières
                   </Button>
-                  <Button type="button" onClick={() => setEmbeddedView('grades')} onDoubleClick={() => goTo(`${role}:grades`)}>
+                  <Button type="button" onClick={() => setEmbeddedView('semester-grades')} onDoubleClick={() => goTo(`${role}:grades`)}>
                     Note semestrielle
                   </Button>
-                  <Button type="button" onClick={() => setEmbeddedView('attendance')} onDoubleClick={() => goTo(`${role}:attendance`)}>
+                  <Button type="button" onClick={() => setEmbeddedView('semester-attendance')} onDoubleClick={() => goTo(`${role}:attendance`)}>
                     Présence
                   </Button>
-                  <Button type="button" onClick={() => setEmbeddedView('tp-by-class')} onDoubleClick={() => goTo(`${role}:tp-by-class`)}>
+                  <Button type="button" onClick={() => setEmbeddedView('semester-tp')} onDoubleClick={() => goTo(`${role}:tp-by-class`)}>
                     TP
                   </Button>
                   <Button
@@ -963,6 +1160,11 @@ export default function SemestersView({ user, role, Button, Input, Select, onErr
           </div>
         ) : (
           <div>
+            {embeddedView !== '' && items.length === 0 && !loading ? (
+              <div className="label" style={{ padding: 12 }}>
+                Aucune donnée chargée. Connecte-toi (login) puis recharge la page.
+              </div>
+            ) : null}
             {embeddedView === 'semester-subjects' ? (
               (() => {
                 const months = (semesterMonths || [])
@@ -976,11 +1178,6 @@ export default function SemestersView({ user, role, Button, Input, Select, onErr
 
                 const subjectsById = new Map((subjects || []).map((s) => [Number(s.id), s]))
 
-                const semesterId = (() => {
-                  const s1 = (subjectsMode === 'S2' ? 'S2' : 'S1').toUpperCase()
-                  return null
-                })()
-
                 const planByKey = new Map()
                 for (const p of semesterSubjectPlan || []) {
                   const key = `${p.semester_id}__${p.class_id}__${p.month_index}__${p.slot_index}`
@@ -991,8 +1188,6 @@ export default function SemestersView({ user, role, Button, Input, Select, onErr
                 const activeSemesterId = allSemIds.size === 1 ? Array.from(allSemIds)[0] : (semesterSubjectPlan[0] ? Number(semesterSubjectPlan[0].semester_id) : 0)
 
                 const slotCount = subjectsMode === 'Tout' ? 8 : 4
-                const showMonths = subjectsMode === 'Tout' ? [...months, ...months] : months
-                const showSemesterIds = subjectsMode === 'Tout' ? [activeSemesterId, activeSemesterId] : [activeSemesterId]
 
                 return (
                   <div className="grid" style={{ gap: 12 }}>
@@ -1041,7 +1236,9 @@ export default function SemestersView({ user, role, Button, Input, Select, onErr
 
                           {!subjectsLoading
                             ? classesSorted.map((cls) => {
-                                const tpAny = (semesterSubjectPlan || []).some((p) => Number(p.class_id) === Number(cls.id) && Number(p.tp) === 1)
+                                const classPlans = (semesterSubjectPlan || []).filter((p) => Number(p.class_id) === Number(cls.id))
+                                const tpAny = classPlans.some((p) => Number(p.tp) === 1)
+                                const tpSource = classPlans[0] || null
                                 return (
                                   <tr key={cls.id}>
                                     <td>{cls.id}</td>
@@ -1053,30 +1250,47 @@ export default function SemestersView({ user, role, Button, Input, Select, onErr
                                       const key = `${activeSemesterId}__${cls.id}__${monthIndex}__${slotIndex}`
                                       const p = planByKey.get(key)
                                       const subj = p?.subject_id ? subjectsById.get(Number(p.subject_id)) : null
+                                      const isEditing = canWrite && editingPlanCell === key
                                       return (
-                                        <td key={`${cls.id}_${idx}`} style={{ minWidth: 180 }}>
-                                          <Select
-                                            value={p?.subject_id ? String(p.subject_id) : ''}
-                                            onChange={(e) => {
-                                              void updatePlanSlot({
-                                                semesterId: activeSemesterId,
-                                                classId: cls.id,
-                                                monthIndex,
-                                                slotIndex,
-                                                subjectId: e.target.value ? Number(e.target.value) : null,
-                                                tp: p?.tp ? 1 : 0
-                                              })
-                                            }}
-                                            disabled={!canWrite}
-                                          >
-                                            <option value="">--</option>
-                                            {(subjects || []).map((s) => (
-                                              <option key={s.id} value={String(s.id)}>
-                                                {s.code} — {s.title}
-                                              </option>
-                                            ))}
-                                          </Select>
-                                          <div className="label" style={{ margin: 0, paddingTop: 4 }}>{subj ? subj.code : ''}</div>
+                                        <td
+                                          key={`${cls.id}_${idx}`}
+                                          style={{ minWidth: 180, cursor: canWrite ? 'pointer' : 'default' }}
+                                          onDoubleClick={() => {
+                                            if (!canWrite) return
+                                            setEditingPlanCell(key)
+                                          }}
+                                          onClick={() => {
+                                            if (editingPlanCell && editingPlanCell !== key) setEditingPlanCell(null)
+                                          }}
+                                        >
+                                          {isEditing ? (
+                                            <Select
+                                              value={p?.subject_id ? String(p.subject_id) : ''}
+                                              onChange={(e) => {
+                                                void updatePlanSlot({
+                                                  semesterId: activeSemesterId,
+                                                  classId: cls.id,
+                                                  monthIndex,
+                                                  slotIndex,
+                                                  subjectId: e.target.value ? Number(e.target.value) : null,
+                                                  tp: p?.tp ? 1 : 0
+                                                })
+                                                setEditingPlanCell(null)
+                                              }}
+                                            >
+                                              <option value="">--</option>
+                                              {(subjects || []).map((s) => (
+                                                <option key={s.id} value={String(s.id)}>
+                                                  {s.code} — {s.title}
+                                                </option>
+                                              ))}
+                                            </Select>
+                                          ) : (
+                                            <div>
+                                              <div style={{ fontWeight: 600 }}>{subj ? `${subj.code}` : '-'}</div>
+                                              <div className="label" style={{ margin: 0 }}>{subj ? subj.title : ''}</div>
+                                            </div>
+                                          )}
                                         </td>
                                       )
                                     })}
@@ -1088,12 +1302,13 @@ export default function SemestersView({ user, role, Button, Input, Select, onErr
                                             type="checkbox"
                                             checked={tpAny}
                                             onChange={(e) => {
+                                              if (!tpSource) return
                                               void updatePlanSlot({
                                                 semesterId: activeSemesterId,
                                                 classId: cls.id,
-                                                monthIndex: 1,
-                                                slotIndex: 1,
-                                                subjectId: null,
+                                                monthIndex: Number(tpSource.month_index || 1),
+                                                slotIndex: Number(tpSource.slot_index || 1),
+                                                subjectId: tpSource.subject_id ? Number(tpSource.subject_id) : null,
                                                 tp: e.target.checked ? 1 : 0
                                               })
                                             }}
@@ -1113,10 +1328,565 @@ export default function SemestersView({ user, role, Button, Input, Select, onErr
                   </div>
                 )
               })()
-            ) : embeddedView === 'grades' ? (
-              <GradesView user={user} role={role} Button={Button} Input={Input} Select={Select} onError={onError} embedded />
-            ) : embeddedView === 'attendance' ? (
-              <AttendanceView user={user} role={role} Button={Button} Input={Input} Select={Select} onError={onError} embedded />
+            ) : embeddedView === 'semester-grades' ? (
+              (() => {
+                const classesSorted = (classes || [])
+                  .slice()
+                  .sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), undefined, { numeric: true, sensitivity: 'base' }))
+
+                const byKey = new Map()
+                for (const r of gradeSummary || []) {
+                  const k = `${r.semester_id}__${r.class_id}__${r.month_index}`
+                  byKey.set(k, r)
+                }
+
+                const allSemIds = new Set((gradeSummary || []).map((p) => Number(p.semester_id)))
+                const activeSemesterId = allSemIds.size === 1 ? Array.from(allSemIds)[0] : (gradeSummary[0] ? Number(gradeSummary[0].semester_id) : 0)
+                const monthCount = subjectsMode === 'Tout' ? 8 : 4
+
+                return (
+                  <div className="grid" style={{ gap: 12 }}>
+                    <div className="row" style={{ justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                      <div className="badge">{gradeSummaryLoading ? 'Chargement…' : `Classes: ${classesSorted.length}`}</div>
+                      <div className="row" style={{ justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+                        <button type="button" className={`pill ${subjectsMode === 'S1' ? 'pill--active' : ''}`} onClick={() => setSubjectsMode('S1')}>
+                          S1
+                        </button>
+                        <button type="button" className={`pill ${subjectsMode === 'S2' ? 'pill--active' : ''}`} onClick={() => setSubjectsMode('S2')}>
+                          S2
+                        </button>
+                        <button type="button" className={`pill ${subjectsMode === 'Tout' ? 'pill--active' : ''}`} onClick={() => setSubjectsMode('Tout')}>
+                          Tout
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="tableWrap">
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: 70 }}>ID</th>
+                            <th style={{ width: 180 }}>Classe</th>
+                            {Array.from({ length: monthCount }).map((_, idx) => (
+                              <th key={`m_${idx}`}>{`Mois ${idx + 1}`}</th>
+                            ))}
+                            <th>Commentaire</th>
+                            <th style={{ width: 140 }}>Date</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {gradeSummaryLoading ? (
+                            <tr>
+                              <td colSpan={5 + monthCount} className="label" style={{ padding: 16 }}>
+                                Chargement…
+                              </td>
+                            </tr>
+                          ) : null}
+
+                          {!gradeSummaryLoading && classesSorted.length === 0 ? (
+                            <tr>
+                              <td colSpan={5 + monthCount} className="label" style={{ padding: 16 }}>
+                                Aucun élément.
+                              </td>
+                            </tr>
+                          ) : null}
+
+                          {!gradeSummaryLoading
+                            ? classesSorted.map((cls) => {
+                                const commentKey = `c__${activeSemesterId}__${cls.id}`
+                                const dateKey = `d__${activeSemesterId}__${cls.id}`
+                                const firstMonthRow = byKey.get(`${activeSemesterId}__${cls.id}__1`) || null
+
+                                return (
+                                  <tr
+                                    key={cls.id}
+                                    style={{ cursor: 'pointer' }}
+                                    onDoubleClick={() => {
+                                      goTo(`${role}:grades`)
+                                    }}
+                                  >
+                                    <td>{cls.id}</td>
+                                    <td>{`${cls.code || ''} — ${cls.title || ''}`.trim()}</td>
+
+                                    {Array.from({ length: monthCount }).map((_, idx) => {
+                                      const monthIndex = (idx % 4) + 1
+                                      const k = `${activeSemesterId}__${cls.id}__${monthIndex}`
+                                      const r = byKey.get(k)
+                                      const cellKey = `m__${k}`
+                                      const isEditing = canWrite && editingGradeCell === cellKey
+                                      return (
+                                        <td
+                                          key={cellKey}
+                                          style={{ minWidth: 120, cursor: canWrite ? 'pointer' : 'default' }}
+                                          onDoubleClick={(e) => {
+                                            e.stopPropagation()
+                                            if (!canWrite) return
+                                            setEditingGradeCell(cellKey)
+                                          }}
+                                        >
+                                          {isEditing ? (
+                                            <input
+                                              className="input"
+                                              autoFocus
+                                              defaultValue={r?.avg_score ?? ''}
+                                              onBlur={(e) => {
+                                                const v = String(e.target.value || '').trim()
+                                                const avg = v === '' ? null : Number(v)
+                                                void upsertGradeSummary({
+                                                  semesterId: activeSemesterId,
+                                                  classId: cls.id,
+                                                  monthIndex,
+                                                  avgScore: Number.isFinite(avg) ? avg : null,
+                                                  globalComment: r?.global_comment ?? null,
+                                                  gradedAt: r?.graded_at ?? null
+                                                })
+                                                setEditingGradeCell(null)
+                                              }}
+                                              onKeyDown={(e) => {
+                                                if (e.key === 'Enter') e.currentTarget.blur()
+                                                if (e.key === 'Escape') setEditingGradeCell(null)
+                                              }}
+                                            />
+                                          ) : (
+                                            <span>{r?.avg_score ?? '-'}</span>
+                                          )}
+                                        </td>
+                                      )
+                                    })}
+
+                                    <td
+                                      style={{ minWidth: 220, cursor: canWrite ? 'pointer' : 'default' }}
+                                      onDoubleClick={(e) => {
+                                        e.stopPropagation()
+                                        if (!canWrite) return
+                                        setEditingGradeCell(commentKey)
+                                      }}
+                                    >
+                                      {canWrite && editingGradeCell === commentKey ? (
+                                        <input
+                                          className="input"
+                                          autoFocus
+                                          defaultValue={firstMonthRow?.global_comment ?? ''}
+                                          onBlur={(e) => {
+                                            const next = String(e.target.value || '').trim()
+                                            void upsertGradeSummary({
+                                              semesterId: activeSemesterId,
+                                              classId: cls.id,
+                                              monthIndex: 1,
+                                              avgScore: firstMonthRow?.avg_score ?? null,
+                                              globalComment: next === '' ? null : next,
+                                              gradedAt: firstMonthRow?.graded_at ?? null
+                                            })
+                                            setEditingGradeCell(null)
+                                          }}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') e.currentTarget.blur()
+                                            if (e.key === 'Escape') setEditingGradeCell(null)
+                                          }}
+                                        />
+                                      ) : (
+                                        <span>{firstMonthRow?.global_comment ?? ''}</span>
+                                      )}
+                                    </td>
+
+                                    <td
+                                      style={{ cursor: canWrite ? 'pointer' : 'default' }}
+                                      onDoubleClick={(e) => {
+                                        e.stopPropagation()
+                                        if (!canWrite) return
+                                        setEditingGradeCell(dateKey)
+                                      }}
+                                    >
+                                      {canWrite && editingGradeCell === dateKey ? (
+                                        <input
+                                          className="input"
+                                          autoFocus
+                                          defaultValue={firstMonthRow?.graded_at ?? ''}
+                                          onBlur={(e) => {
+                                            const next = String(e.target.value || '').trim()
+                                            void upsertGradeSummary({
+                                              semesterId: activeSemesterId,
+                                              classId: cls.id,
+                                              monthIndex: 1,
+                                              avgScore: firstMonthRow?.avg_score ?? null,
+                                              globalComment: firstMonthRow?.global_comment ?? null,
+                                              gradedAt: next === '' ? null : next
+                                            })
+                                            setEditingGradeCell(null)
+                                          }}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') e.currentTarget.blur()
+                                            if (e.key === 'Escape') setEditingGradeCell(null)
+                                          }}
+                                        />
+                                      ) : (
+                                        <span>{firstMonthRow?.graded_at ?? ''}</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                )
+                              })
+                            : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )
+              })()
+            ) : embeddedView === 'semester-tp' ? (
+              (() => {
+                const classesSorted = (classes || [])
+                  .slice()
+                  .sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), undefined, { numeric: true, sensitivity: 'base' }))
+
+                const byKey = new Map()
+                for (const r of tpSummary || []) {
+                  const k = `${r.semester_id}__${r.class_id}__${r.month_index}`
+                  byKey.set(k, r)
+                }
+
+                const allSemIds = new Set((tpSummary || []).map((p) => Number(p.semester_id)))
+                const activeSemesterId = allSemIds.size === 1 ? Array.from(allSemIds)[0] : (tpSummary[0] ? Number(tpSummary[0].semester_id) : 0)
+                const monthCount = subjectsMode === 'Tout' ? 8 : 4
+
+                return (
+                  <div className="grid" style={{ gap: 12 }}>
+                    <div className="row" style={{ justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                      <div className="badge">{tpSummaryLoading ? 'Chargement…' : `Classes: ${classesSorted.length}`}</div>
+                      <div className="row" style={{ justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+                        <button type="button" className={`pill ${subjectsMode === 'S1' ? 'pill--active' : ''}`} onClick={() => setSubjectsMode('S1')}>
+                          S1
+                        </button>
+                        <button type="button" className={`pill ${subjectsMode === 'S2' ? 'pill--active' : ''}`} onClick={() => setSubjectsMode('S2')}>
+                          S2
+                        </button>
+                        <button type="button" className={`pill ${subjectsMode === 'Tout' ? 'pill--active' : ''}`} onClick={() => setSubjectsMode('Tout')}>
+                          Tout
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="tableWrap">
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: 70 }}>ID</th>
+                            <th style={{ width: 180 }}>Classe</th>
+                            {Array.from({ length: monthCount }).map((_, idx) => (
+                              <th key={`tp_m_${idx}`}>{`Mois ${idx + 1}`}</th>
+                            ))}
+                            <th>Commentaire</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tpSummaryLoading ? (
+                            <tr>
+                              <td colSpan={3 + monthCount} className="label" style={{ padding: 16 }}>
+                                Chargement…
+                              </td>
+                            </tr>
+                          ) : null}
+
+                          {!tpSummaryLoading && classesSorted.length === 0 ? (
+                            <tr>
+                              <td colSpan={3 + monthCount} className="label" style={{ padding: 16 }}>
+                                Aucun élément.
+                              </td>
+                            </tr>
+                          ) : null}
+
+                          {!tpSummaryLoading
+                            ? classesSorted.map((cls) => {
+                                const commentKey = `tp_c__${activeSemesterId}__${cls.id}`
+                                const firstMonthRow = byKey.get(`${activeSemesterId}__${cls.id}__1`) || null
+                                return (
+                                  <tr
+                                    key={cls.id}
+                                    style={{ cursor: 'pointer' }}
+                                    onDoubleClick={() => {
+                                      goTo(`${role}:tp-by-class`)
+                                    }}
+                                  >
+                                    <td>{cls.id}</td>
+                                    <td>{`${cls.code || ''} — ${cls.title || ''}`.trim()}</td>
+
+                                    {Array.from({ length: monthCount }).map((_, idx) => {
+                                      const monthIndex = (idx % 4) + 1
+                                      const k = `${activeSemesterId}__${cls.id}__${monthIndex}`
+                                      const r = byKey.get(k)
+                                      const cellKey = `tp_m__${k}`
+                                      const isEditing = canWrite && editingTpCell === cellKey
+                                      const tpCount = r?.tp_count ?? 0
+                                      const avgScore = r?.avg_score
+                                      const display = r ? `${tpCount}${avgScore != null ? ` (${Number(avgScore).toFixed(1)})` : ''}` : '-'
+
+                                      return (
+                                        <td
+                                          key={cellKey}
+                                          style={{ minWidth: 140, cursor: canWrite ? 'pointer' : 'default' }}
+                                          onDoubleClick={(e) => {
+                                            e.stopPropagation()
+                                            if (!canWrite) return
+                                            setEditingTpCell(cellKey)
+                                          }}
+                                        >
+                                          {isEditing ? (
+                                            <input
+                                              className="input"
+                                              autoFocus
+                                              placeholder="tp_count|avg_score"
+                                              defaultValue={r ? `${tpCount}|${avgScore ?? ''}` : ''}
+                                              onBlur={(e) => {
+                                                const raw = String(e.target.value || '').trim()
+                                                const parts = raw.split('|')
+                                                const nextCount = Math.max(0, Number(String(parts[0] ?? '').trim() || '0'))
+                                                const avgRaw = String(parts[1] ?? '').trim()
+                                                const nextAvg = avgRaw === '' ? null : Number(avgRaw)
+                                                void upsertTpSummary({
+                                                  semesterId: activeSemesterId,
+                                                  classId: cls.id,
+                                                  monthIndex,
+                                                  tpCount: Number.isFinite(nextCount) ? nextCount : 0,
+                                                  avgScore: nextAvg != null && Number.isFinite(nextAvg) ? nextAvg : null,
+                                                  globalComment: r?.global_comment ?? null
+                                                })
+                                                setEditingTpCell(null)
+                                              }}
+                                              onKeyDown={(e) => {
+                                                if (e.key === 'Enter') e.currentTarget.blur()
+                                                if (e.key === 'Escape') setEditingTpCell(null)
+                                              }}
+                                            />
+                                          ) : (
+                                            <span>{display}</span>
+                                          )}
+                                        </td>
+                                      )
+                                    })}
+
+                                    <td
+                                      style={{ minWidth: 220, cursor: canWrite ? 'pointer' : 'default' }}
+                                      onDoubleClick={(e) => {
+                                        e.stopPropagation()
+                                        if (!canWrite) return
+                                        setEditingTpCell(commentKey)
+                                      }}
+                                    >
+                                      {canWrite && editingTpCell === commentKey ? (
+                                        <input
+                                          className="input"
+                                          autoFocus
+                                          defaultValue={firstMonthRow?.global_comment ?? ''}
+                                          onBlur={(e) => {
+                                            const next = String(e.target.value || '').trim()
+                                            void upsertTpSummary({
+                                              semesterId: activeSemesterId,
+                                              classId: cls.id,
+                                              monthIndex: 1,
+                                              tpCount: firstMonthRow?.tp_count ?? 0,
+                                              avgScore: firstMonthRow?.avg_score ?? null,
+                                              globalComment: next === '' ? null : next
+                                            })
+                                            setEditingTpCell(null)
+                                          }}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') e.currentTarget.blur()
+                                            if (e.key === 'Escape') setEditingTpCell(null)
+                                          }}
+                                        />
+                                      ) : (
+                                        <span>{firstMonthRow?.global_comment ?? ''}</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                )
+                              })
+                            : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )
+              })()
+            ) : embeddedView === 'semester-attendance' ? (
+              (() => {
+                const classesSorted = (classes || [])
+                  .slice()
+                  .sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), undefined, { numeric: true, sensitivity: 'base' }))
+
+                const byKey = new Map()
+                for (const r of attSummary || []) {
+                  const k = `${r.semester_id}__${r.class_id}__${r.month_index}`
+                  byKey.set(k, r)
+                }
+
+                const allSemIds = new Set((attSummary || []).map((p) => Number(p.semester_id)))
+                const activeSemesterId = allSemIds.size === 1 ? Array.from(allSemIds)[0] : (attSummary[0] ? Number(attSummary[0].semester_id) : 0)
+                const monthCount = subjectsMode === 'Tout' ? 8 : 4
+
+                return (
+                  <div className="grid" style={{ gap: 12 }}>
+                    <div className="row" style={{ justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                      <div className="badge">{attSummaryLoading ? 'Chargement…' : `Classes: ${classesSorted.length}`}</div>
+                      <div className="row" style={{ justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+                        <button type="button" className={`pill ${subjectsMode === 'S1' ? 'pill--active' : ''}`} onClick={() => setSubjectsMode('S1')}>
+                          S1
+                        </button>
+                        <button type="button" className={`pill ${subjectsMode === 'S2' ? 'pill--active' : ''}`} onClick={() => setSubjectsMode('S2')}>
+                          S2
+                        </button>
+                        <button type="button" className={`pill ${subjectsMode === 'Tout' ? 'pill--active' : ''}`} onClick={() => setSubjectsMode('Tout')}>
+                          Tout
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="tableWrap">
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: 70 }}>ID</th>
+                            <th style={{ width: 180 }}>Classe</th>
+                            {Array.from({ length: monthCount }).map((_, idx) => (
+                              <th key={`m_${idx}`}>{`Mois ${idx + 1}`}</th>
+                            ))}
+                            <th>Commentaire</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {attSummaryLoading ? (
+                            <tr>
+                              <td colSpan={3 + monthCount} className="label" style={{ padding: 16 }}>
+                                Chargement…
+                              </td>
+                            </tr>
+                          ) : null}
+
+                          {!attSummaryLoading && classesSorted.length === 0 ? (
+                            <tr>
+                              <td colSpan={3 + monthCount} className="label" style={{ padding: 16 }}>
+                                Aucun élément.
+                              </td>
+                            </tr>
+                          ) : null}
+
+                          {!attSummaryLoading
+                            ? classesSorted.map((cls) => {
+                                const commentKey = `c__${activeSemesterId}__${cls.id}`
+                                const firstMonthRow = byKey.get(`${activeSemesterId}__${cls.id}__1`) || null
+
+                                return (
+                                  <tr
+                                    key={cls.id}
+                                    style={{ cursor: 'pointer' }}
+                                    onDoubleClick={() => {
+                                      goTo(`${role}:attendance`)
+                                    }}
+                                  >
+                                    <td>{cls.id}</td>
+                                    <td>{`${cls.code || ''} — ${cls.title || ''}`.trim()}</td>
+
+                                    {Array.from({ length: monthCount }).map((_, idx) => {
+                                      const monthIndex = (idx % 4) + 1
+                                      const k = `${activeSemesterId}__${cls.id}__${monthIndex}`
+                                      const r = byKey.get(k)
+                                      const cellKey = `m__${k}`
+                                      const isEditing = canWrite && editingAttCell === cellKey
+                                      const valueLabel = r ? `${r.present_count ?? '-'}P / ${r.absent_count ?? '-'}A` : '-'
+
+                                      return (
+                                        <td
+                                          key={cellKey}
+                                          style={{ minWidth: 140, cursor: canWrite ? 'pointer' : 'default' }}
+                                          onDoubleClick={(e) => {
+                                            e.stopPropagation()
+                                            if (!canWrite) return
+                                            setEditingAttCell(cellKey)
+                                          }}
+                                        >
+                                          {isEditing ? (
+                                            <input
+                                              className="input"
+                                              autoFocus
+                                              placeholder="present,absent,late,total"
+                                              defaultValue={r ? `${r.present_count ?? ''},${r.absent_count ?? ''},${r.late_count ?? ''},${r.total_count ?? ''}` : ''}
+                                              onBlur={(e) => {
+                                                const raw = String(e.target.value || '').trim()
+                                                const parts = raw.split(',').map((x) => x.trim())
+                                                const p = parts[0] === '' ? null : Number(parts[0])
+                                                const a = parts[1] === '' ? null : Number(parts[1])
+                                                const l = parts[2] === '' ? null : Number(parts[2])
+                                                const t = parts[3] === '' ? null : Number(parts[3])
+                                                void upsertAttendanceSummary({
+                                                  semesterId: activeSemesterId,
+                                                  classId: cls.id,
+                                                  monthIndex,
+                                                  presentCount: Number.isFinite(p) ? p : null,
+                                                  absentCount: Number.isFinite(a) ? a : null,
+                                                  lateCount: Number.isFinite(l) ? l : null,
+                                                  totalCount: Number.isFinite(t) ? t : null,
+                                                  globalComment: r?.global_comment ?? null
+                                                })
+                                                setEditingAttCell(null)
+                                              }}
+                                              onKeyDown={(e) => {
+                                                if (e.key === 'Enter') e.currentTarget.blur()
+                                                if (e.key === 'Escape') setEditingAttCell(null)
+                                              }}
+                                            />
+                                          ) : (
+                                            <span>{valueLabel}</span>
+                                          )}
+                                        </td>
+                                      )
+                                    })}
+
+                                    <td
+                                      style={{ minWidth: 220, cursor: canWrite ? 'pointer' : 'default' }}
+                                      onDoubleClick={(e) => {
+                                        e.stopPropagation()
+                                        if (!canWrite) return
+                                        setEditingAttCell(commentKey)
+                                      }}
+                                    >
+                                      {canWrite && editingAttCell === commentKey ? (
+                                        <input
+                                          className="input"
+                                          autoFocus
+                                          defaultValue={firstMonthRow?.global_comment ?? ''}
+                                          onBlur={(e) => {
+                                            const next = String(e.target.value || '').trim()
+                                            void upsertAttendanceSummary({
+                                              semesterId: activeSemesterId,
+                                              classId: cls.id,
+                                              monthIndex: 1,
+                                              presentCount: firstMonthRow?.present_count ?? null,
+                                              absentCount: firstMonthRow?.absent_count ?? null,
+                                              lateCount: firstMonthRow?.late_count ?? null,
+                                              totalCount: firstMonthRow?.total_count ?? null,
+                                              globalComment: next === '' ? null : next
+                                            })
+                                            setEditingAttCell(null)
+                                          }}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') e.currentTarget.blur()
+                                            if (e.key === 'Escape') setEditingAttCell(null)
+                                          }}
+                                        />
+                                      ) : (
+                                        <span>{firstMonthRow?.global_comment ?? ''}</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                )
+                              })
+                            : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )
+              })()
             ) : embeddedView === 'tp-by-class' ? (
               <TpByClassView role={role} Button={Button} Input={Input} Select={Select} onError={onError} embedded />
             ) : embeddedView === 'visits-by-class' ? (
